@@ -13,6 +13,11 @@
       "@quizapp/source": "./src/events-authoriser.ts",
       "types": "./dist/events-authoriser.d.ts",
       "default": "./dist/events-authoriser.js"
+    },
+    "./repository": {
+      "@quizapp/source": "./src/repository/dynamo-repository.ts",
+      "types": "./dist/repository/dynamo-repository.d.ts",
+      "default": "./dist/repository/dynamo-repository.js"
     }
   },
   "scripts": {

@@ -7,6 +7,14 @@
     "noEmit": false,
     "emitDeclarationOnly": true
   },
-  "include": ["*.ts"],
-  "references": [{ "path": "../packages/api" }]
+  "include": ["**/*.ts"],
+  "references": [
+    {
+      "path": "../packages/api"
+    },
+    {
+      "path": "../packages/domain"
+    }
+  ],
+  "exclude": ["node_modules", "dist"]
 }

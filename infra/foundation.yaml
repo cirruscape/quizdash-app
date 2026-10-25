@@ -79,6 +79,9 @@ Resources:
       ExplicitAuthFlows:
         - ALLOW_USER_SRP_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
+        # Lets IAM-authenticated callers (the smoke test) sign a test Host in without a browser.
+        # It needs cognito-idp:AdminInitiateAuth, so it isn't open to the public.
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH
       PreventUserExistenceErrors: ENABLED
       AccessTokenValidity: 1
       IdTokenValidity: 1

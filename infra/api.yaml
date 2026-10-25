@@ -1,0 +1,160 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  Quiz App API (PLAN §5, §6, §9): the HTTP API with a Cognito JWT authoriser for Host routes,
+  the API Lambda (all routes, one internal router), and AppSync Events for live play, with its
+  Lambda authoriser. Stack name: quizapp-{env}-api.
+  Bundle first with: pnpm --filter @quizapp/api bundle
+
+Parameters:
+  Env:
+    Type: String
+    AllowedValues: [dev, prod]
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [arm64]
+    Handler: index.handler
+    Environment:
+      Variables:
+        APP_ENV: !Ref Env
+        NODE_OPTIONS: --enable-source-maps
+
+Resources:
+  # ---------------------------------------------------------------- HTTP API
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Auth:
+        # Host routes need a Cognito token; Player and public routes opt out per route below.
+        DefaultAuthorizer: CognitoHost
+        Authorizers:
+          CognitoHost:
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              issuer: !Sub
+                - https://cognito-idp.${AWS::Region}.amazonaws.com/${PoolId}
+                - PoolId: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-UserPoolId' }
+              audience:
+                - { 'Fn::ImportValue': !Sub 'quizapp-${Env}-UserPoolClientId' }
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../packages/api/dist-lambda/http
+      MemorySize: 512
+      Timeout: 10
+      # Required by the hook in the default-profile account; also caps runaway cost.
+      ReservedConcurrentExecutions: 50
+      Environment:
+        Variables:
+          TABLE_NAME: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-TableName' }
+          PLAYER_TOKEN_SECRET_ARN: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-PlayerTokenSecretArn' }
+          EVENTS_HTTP_DOMAIN: !GetAtt EventsApi.Dns.Http
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-TableName' }
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-PlayerTokenSecretArn' }
+        - Statement:
+            - Sid: PublishGameEvents
+              Effect: Allow
+              Action: appsync:EventPublish
+              Resource: !Sub arn:aws:appsync:${AWS::Region}:${AWS::AccountId}:apis/${EventsApi.ApiId}/channelNamespace/game
+      Events:
+        # Public
+        Join: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /api/join, Method: POST, Auth: { Authorizer: NONE } } }
+        # Players: authenticated in the Lambda by their Player token
+        PlaySnapshot: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /api/play, Method: GET, Auth: { Authorizer: NONE } } }
+        PlayAnswer: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /api/play/answers, Method: POST, Auth: { Authorizer: NONE } } }
+        # Hosts: the Cognito authoriser (the default)
+        CreateGame: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /api/games, Method: POST } }
+        ActiveGame: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /api/games/active, Method: GET } }
+        HostSnapshot: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: '/api/games/{gameId}', Method: GET } }
+        HostCommand: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: '/api/games/{gameId}/{command}', Method: POST } }
+        RemovePlayer: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: '/api/games/{gameId}/players/{playerId}', Method: DELETE } }
+
+  HealthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../packages/api/dist-lambda/health
+      MemorySize: 128
+      Timeout: 3
+      ReservedConcurrentExecutions: 2
+      Events:
+        Health: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /api/health, Method: GET, Auth: { Authorizer: NONE } } }
+
+  # ---------------------------------------------------------------- Live play (ADR 0002)
+  EventsAuthoriserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../packages/api/dist-lambda/events-authoriser
+      MemorySize: 256
+      Timeout: 5
+      ReservedConcurrentExecutions: 20
+      Environment:
+        Variables:
+          PLAYER_TOKEN_SECRET_ARN: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-PlayerTokenSecretArn' }
+          USER_POOL_ID: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-UserPoolId' }
+          USER_POOL_CLIENT_ID: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-UserPoolClientId' }
+          TABLE_NAME: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-TableName' }
+      Policies:
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-PlayerTokenSecretArn' }
+        - DynamoDBReadPolicy:
+            TableName: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-TableName' }
+
+  EventsApi:
+    Type: AWS::AppSync::Api
+    Properties:
+      Name: !Sub quizapp-${Env}-events
+      EventConfig:
+        AuthProviders:
+          - AuthType: AWS_IAM
+          - AuthType: AWS_LAMBDA
+            LambdaAuthorizerConfig:
+              AuthorizerUri: !GetAtt EventsAuthoriserFunction.Arn
+              AuthorizerResultTtlInSeconds: 60
+              # Player tokens and Cognito tokens are both JWTs.
+              IdentityValidationExpression: ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$
+        ConnectionAuthModes:
+          - AuthType: AWS_IAM
+          - AuthType: AWS_LAMBDA
+        # Only the backend (IAM) publishes; clients only subscribe.
+        DefaultPublishAuthModes:
+          - AuthType: AWS_IAM
+        DefaultSubscribeAuthModes:
+          - AuthType: AWS_LAMBDA
+
+  EventsAuthoriserInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref EventsAuthoriserFunction
+      Principal: appsync.amazonaws.com
+      SourceArn: !GetAtt EventsApi.ApiArn
+
+  GameNamespace:
+    Type: AWS::AppSync::ChannelNamespace
+    Properties:
+      ApiId: !GetAtt EventsApi.ApiId
+      Name: game
+
+Outputs:
+  ApiUrl:
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+    Export:
+      Name: !Sub quizapp-${Env}-ApiUrl
+  ApiDomain:
+    Value: !Sub ${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+    Export:
+      Name: !Sub quizapp-${Env}-ApiDomain
+  EventsHttpDomain:
+    Value: !GetAtt EventsApi.Dns.Http
+    Export:
+      Name: !Sub quizapp-${Env}-EventsHttpDomain
+  EventsRealtimeDomain:
+    Value: !GetAtt EventsApi.Dns.Realtime
+    Export:
+      Name: !Sub quizapp-${Env}-EventsRealtimeDomain

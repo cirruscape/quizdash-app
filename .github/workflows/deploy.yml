@@ -2,7 +2,7 @@ name: Deploy
 
 # Deploys the M0 stacks to dev on every push to main (PLAN §9, §10):
 #   CI -> foundation -> agent image -> agent stack + Spike A smoke test
-#                    -> Spike B stack
+#                    -> api stack
 # Prod deployment (tags, approvals) arrives in M5.
 #
 # Requires a GitHub Environment named "dev" with these variables, taken from the outputs of
@@ -152,7 +152,7 @@ jobs:
           cat response.json; echo
           jq -e '.status == "success" and (.response | test("canberra"; "i"))' response.json
 
-  spike-events:
+  api:
     needs: foundation
     runs-on: ubuntu-latest
     environment: dev
@@ -181,15 +181,16 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy Spike B stack
+      - name: Deploy api stack
         run: |
           sam deploy \
-            --template-file infra/spikes/events-auth.yaml \
-            --stack-name "quizapp-${APP_ENV}-spike-events" \
+            --template-file infra/api.yaml \
+            --stack-name "quizapp-${APP_ENV}-api" \
             --s3-bucket "${{ vars.ARTIFACTS_BUCKET }}" \
-            --s3-prefix spike-events \
+            --s3-prefix api \
             --role-arn "${{ vars.CFN_EXECUTION_ROLE_ARN }}" \
             --capabilities CAPABILITY_IAM \
+            --parameter-overrides Env="${APP_ENV}" \
             --region "${AWS_REGION}" \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset
