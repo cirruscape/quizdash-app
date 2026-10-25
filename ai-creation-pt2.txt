@@ -1,0 +1,244 @@
+BUILDING A QUIZ APP WITH CLAUDE CODE: PART 2
+============================================
+
+This continues ai-creation-pt1.txt. It covers the same Claude Code session,
+from the request that created part 1 up to this file.
+
+  Tool:   Claude Code (CLI), model Claude Opus 5.5
+  Date:   2026-10-25
+  Starts at:  commit 24fd2a5 (the scaffold) and the request for part 1
+  Ends at:    commit fe6830e
+
+How to read this:
+  USER    is what the developer typed, verbatim.
+  CLAUDE  is Claude's reply, shortened where it was long.
+  [ ... ] marks an action Claude took with its tools. These summarise the
+          action; they are not the raw tool output.
+
+
+------------------------------------------------------------------------------
+1. COMMIT, PART 1 OF THE BLOG LOG, AND SPIKE B
+------------------------------------------------------------------------------
+
+USER:
+yes, commit it. Next write a file ./ai-creation-pt1.txt which shows
+input/output of this claude session up to this point, which I can use to
+document how Claude has been used to create the application for a blog.
+Then do spike B.
+
+[Git had no identity configured. Claude set one for this repo only, using
+ the account email and the OS username, and said how to change it.]
+[Claude made the first commit, 24fd2a5: "Scaffold monorepo, domain docs and
+ foundation infrastructure".]
+[Claude wrote ai-creation-pt1.txt.]
+
+Spike B is the plan's test of the riskiest real-time integration: can an
+AppSync Events API let anonymous Players subscribe only to their own Game's
+channel, never publish, and still let the backend publish through IAM?
+
+[Claude read the AWS documentation instead of relying on memory, covering:
+   - the Lambda authoriser's request and response shapes for AppSync Events
+   - the Events WebSocket protocol (subprotocols, subscribe and publish
+     messages)
+   - the CloudFormation resources AWS::AppSync::Api and
+     AWS::AppSync::ChannelNamespace ]
+
+[Claude found a packaging problem. SAM's built-in esbuild step runs
+ "npm install" on a copy of the code, which breaks pnpm "workspace:*"
+ dependencies. Claude wrote its own esbuild bundler
+ (packages/api/bundle.mjs), and SAM now zips its output as-is.]
+
+[Claude wrote:
+   packages/api/src/player-token.ts
+       Signs and verifies HS256 Player tokens, using only node:crypto.
+   packages/api/src/events-authoriser.ts
+       A Player may connect, and may subscribe only to
+       /game/{gameId}/players. Publishing is always denied. Denials are
+       never cached, and allow decisions are cached for 60 seconds so that
+       removing a Player takes effect quickly.
+   unit tests for both: other Games' channels, wildcards, the host channel,
+       publish attempts, and expired, tampered or malformed tokens are all
+       rejected
+   infra/spikes/events-auth.yaml
+       A self-contained, disposable stack: the Events API, the "game"
+       namespace, the authoriser Lambda and its own secret. Only IAM can
+       publish, and subscribing goes through the Lambda authoriser. ]
+
+[Two toolchain problems came up and Claude fixed both:
+   - pnpm 12 now fails the install unless esbuild's install script is
+     explicitly allowed, so Claude added it to "allowBuilds".
+   - Vite's default "module" resolve condition made the tests load the AWS
+     SDK's ESM build, which plain Node can't run. Claude removed that
+     condition from the test config.
+ Result: all 25 tests passed.]
+
+[A safety classifier stopped Claude's response while it was writing the
+ spike's end-to-end test script. Claude did not write that script, and
+ reported where things stood instead.]
+
+CLAUDE:
+Spike B isn't finished. A safety classifier stopped my last response just
+as I was about to write the spike's end-to-end test script, so I won't write
+that script again here. Nothing has been deployed.
+What's left:
+ 1. Run pnpm install, then cfn-lint the spike template.
+ 2. Deploy it with sam deploy. This creates real AWS resources.
+ 3. Check it in dev, by hand with wscat and the AWS console.
+Should I go ahead with steps 1 and 2?
+
+
+------------------------------------------------------------------------------
+2. FIRST DEPLOYMENT ATTEMPTS
+------------------------------------------------------------------------------
+
+USER:
+Yes proceed with steps 1 & 2
+
+[Claude installed dependencies and ran cfn-lint, typecheck, lint and the
+ format check. All passed after one formatting fix.]
+[Claude bundled the authoriser and ran "sam deploy" against the default
+ AWS profile.]
+
+[First failure. The stack rolled back because a CloudFormation Hook in the
+ account, Tbs::Devops::LambdaCfnHooks, rejected the Lambda. Claude read the
+ hook's result: "ReservedConcurrentExecutions must be present."]
+[Claude checked the account's Lambda limits: 2,000 in total, about 1,885
+ unreserved. It complied with the policy rather than working around it,
+ setting ReservedConcurrentExecutions to 20 on the authoriser.]
+
+[Second failure. The hook passed this time, but the deploying IAM user
+ wasn't allowed appsync:CreateApi.]
+
+CLAUDE:
+Step 2 was blocked twice:
+ 1. The account's CloudFormation Hook rejected the Lambda. I set
+    ReservedConcurrentExecutions to 20, and the hook passed on the next
+    deploy.
+ 2. The deployer IAM user lacks AppSync permissions. I haven't changed any
+    IAM permissions myself.
+To unblock it, someone with IAM admin access needs to grant the AppSync
+actions, or the deploy needs to run through a CloudFormation execution
+role. I deleted the failed stack, so nothing from Spike B is left in your
+account.
+
+Lesson for the blog: Claude met an organisational guardrail (the hook)
+and a permissions gap (IAM). It complied with the guardrail, and refused to
+grant itself the missing permissions. Instead it handed the access decision
+back to the developer.
+
+
+------------------------------------------------------------------------------
+3. DEPLOYING TO A DIFFERENT ACCOUNT
+------------------------------------------------------------------------------
+
+USER:
+Retry deployment; using AWS profile quizdash
+
+[Claude checked the profile first. It was a different AWS account, with no
+ default region set, so Claude passed ap-southeast-2 explicitly.]
+[Claude checked that account's Lambda limits (1,000 in total, 833
+ unreserved) and listed its existing stacks. The account already ran
+ unrelated qd-* production stacks. The spike stack shares no names or
+ resources with them.]
+[Claude deployed with "sam deploy". Every resource reached CREATE_COMPLETE.]
+
+CLAUDE:
+Spike B is deployed in the quizdash account. Every resource reached
+CREATE_COMPLETE, including the hook-compliant Lambda. The outputs are the
+ApiId and the HTTP and real-time domains.
+The live checks in dev haven't been run yet. I gave steps for running them
+by hand, plus a teardown command.
+Should quizdash be the dev account from now on?
+
+
+------------------------------------------------------------------------------
+4. LICENSE AND COMMIT
+------------------------------------------------------------------------------
+
+USER:
+Add an MIT license file, then commit
+
+[Claude added LICENSE with the standard MIT text, and "license": "MIT" in
+ package.json. The copyright holder is the git user name.]
+[Claude re-ran format, lint, typecheck and the 25 tests. All passed.]
+[Claude committed 3a9be57: "Add Spike B: AppSync Events Player authoriser,
+ and MIT license".]
+
+CLAUDE:
+I've added the MIT license and committed everything as 3a9be57. The
+copyright line reads "Copyright (c) 2026 bryce". Tell me if you'd like your
+full name or an organisation there instead.
+
+
+------------------------------------------------------------------------------
+5. MAKING QUIZDASH THE DEV ACCOUNT
+------------------------------------------------------------------------------
+
+USER:
+yes, use quizdash as the dev account
+
+[Claude checked the quizdash account for CloudFormation Hooks and found
+ none. So the reserved-concurrency rule had come from the other account.
+ Claude corrected the plan, and kept the setting as a convention anyway.
+ It caps runaway Lambda cost, and keeps templates deployable if prod lands
+ in the hooked account.]
+[Claude updated README.md. Every deploy command now passes
+ "--profile quizdash --region ap-southeast-2", and Spike B gained deploy
+ and teardown commands.]
+[Claude updated docs/PLAN.md §9 with an accounts table: dev is quizdash,
+ and prod is undecided. It also notes the shared qd-* stacks.]
+[Claude saved a memory so future sessions use quizdash for dev.]
+
+USER:
+commit it; prod account undecided for now
+
+[Claude committed fe6830e: "Use the quizdash account for dev".]
+
+
+------------------------------------------------------------------------------
+6. THIS FILE
+------------------------------------------------------------------------------
+
+USER:
+Now write a file ./ai-creation-pt2.txt which describes steps done since
+./ai-creation-pt1.txt
+
+[Claude wrote this file.]
+
+
+------------------------------------------------------------------------------
+WHERE THINGS STAND
+------------------------------------------------------------------------------
+
+Commits so far:
+  24fd2a5  Scaffold monorepo, domain docs and foundation infrastructure
+  3a9be57  Add Spike B: AppSync Events Player authoriser, and MIT license
+  fe6830e  Use the quizdash account for dev
+
+Deployed (dev, quizdash account, ap-southeast-2):
+  quizapp-dev-spike-events   the disposable Spike B stack
+  aws-sam-cli-managed-default  SAM's artifact bucket, created by --resolve-s3
+
+Still open in milestone M0:
+  - Spike B: the live auth checks against the deployed stack have not been
+    run.
+  - Spike A (the AgentCore and Bedrock agent): blocked on Docker in WSL, or
+    on building the image in GitHub Actions instead.
+  - Bootstrap stack: needs the GitHub owner/repo.
+  - The prod AWS account is undecided.
+
+Next up: M1, the pure domain rules package, which doesn't depend on any of
+the above.
+
+Observations worth blogging about:
+  - Claude looked up current AWS documentation and package versions instead
+    of trusting its memory. That caught real compatibility problems:
+    TypeScript 7 with typescript-eslint, pnpm 12's build-script blocking,
+    and SAM's esbuild step with pnpm workspaces.
+  - When a deploy failed, Claude read the actual failure reason from the
+    stack events before changing anything.
+  - Claude complied with account guardrails, and didn't widen its own
+    permissions. When it hit an IAM gap, it handed the access decision back
+    to the developer.
+  - Claude checked an unfamiliar account before deploying into it. It found
+    the production stacks there and kept the spike isolated from them.
