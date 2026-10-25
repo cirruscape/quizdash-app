@@ -1,0 +1,161 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::LanguageExtensions
+Description: >-
+  Quiz App foundation (PLAN §9): DynamoDB table, Cognito user pool for Hosts,
+  ECR repository for the generation agent, Player token signing secret and
+  runtime parameters. Stack name: quizapp-{env}-foundation.
+
+Parameters:
+  Env:
+    Type: String
+    AllowedValues: [dev, prod]
+    Description: Deployment environment.
+
+Conditions:
+  IsProd: !Equals [!Ref Env, prod]
+
+Resources:
+  # ---------------------------------------------------------------- Data
+  Table:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: !If [IsProd, Retain, Delete]
+    UpdateReplacePolicy: !If [IsProd, Retain, Delete]
+    Properties:
+      TableName: !Sub quizapp-${Env}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+        - { AttributeName: GSI1PK, AttributeType: S }
+        - { AttributeName: GSI1SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+      GlobalSecondaryIndexes:
+        # Sparse index of unfinished Games by lastActivityAt, for the abandonment sweeper.
+        - IndexName: GSI1
+          KeySchema:
+            - { AttributeName: GSI1PK, KeyType: HASH }
+            - { AttributeName: GSI1SK, KeyType: RANGE }
+          Projection:
+            ProjectionType: KEYS_ONLY
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProd, true, false]
+      SSESpecification:
+        SSEEnabled: true
+
+  # ---------------------------------------------------------------- Host auth
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: !If [IsProd, Retain, Delete]
+    UpdateReplacePolicy: !If [IsProd, Retain, Delete]
+    Properties:
+      UserPoolName: !Sub quizapp-${Env}-hosts
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - { Name: verified_email, Priority: 1 }
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      DeletionProtection: !If [IsProd, ACTIVE, INACTIVE]
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub quizapp-${Env}-web
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+
+  # ---------------------------------------------------------------- Agent image
+  AgentRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub quizapp-${Env}-agent
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EmptyOnDelete: !If [IsProd, false, true]
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [{
+              "rulePriority": 1,
+              "description": "Keep the 20 most recent images",
+              "selection": { "tagStatus": "any", "countType": "imageCountMoreThan", "countNumber": 20 },
+              "action": { "type": "expire" }
+            }]
+          }
+
+  # ---------------------------------------------------------------- Secrets and parameters
+  PlayerTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub quizapp/${Env}/player-token-key
+      Description: HS256 signing key for Player tokens (PLAN §5).
+      GenerateSecretString:
+        PasswordLength: 64
+        ExcludePunctuation: true
+
+  ToxicityThresholdParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /quizapp/${Env}/toxicityThreshold
+      Type: String
+      Value: '0.5'
+      Description: Reject a Nickname if any Comprehend toxicity category scores at or above this (FR-5.3).
+
+Outputs:
+  TableName:
+    Value: !Ref Table
+    Export:
+      Name: !Sub quizapp-${Env}-TableName
+  TableArn:
+    Value: !GetAtt Table.Arn
+    Export:
+      Name: !Sub quizapp-${Env}-TableArn
+  UserPoolId:
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub quizapp-${Env}-UserPoolId
+  UserPoolArn:
+    Value: !GetAtt UserPool.Arn
+    Export:
+      Name: !Sub quizapp-${Env}-UserPoolArn
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub quizapp-${Env}-UserPoolClientId
+  AgentRepositoryUri:
+    Value: !GetAtt AgentRepository.RepositoryUri
+    Export:
+      Name: !Sub quizapp-${Env}-AgentRepositoryUri
+  PlayerTokenSecretArn:
+    Value: !Ref PlayerTokenSecret
+    Export:
+      Name: !Sub quizapp-${Env}-PlayerTokenSecretArn
+  ToxicityThresholdParameterName:
+    Value: !Ref ToxicityThresholdParameter
+    Export:
+      Name: !Sub quizapp-${Env}-ToxicityThresholdParameterName

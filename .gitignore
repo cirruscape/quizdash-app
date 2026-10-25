@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.tsbuild/
+coverage/
+.aws-sam/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.claude/settings.local.json

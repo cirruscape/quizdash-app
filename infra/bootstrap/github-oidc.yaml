@@ -1,0 +1,153 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  One-off bootstrap, deployed by hand once per environment (PLAN §10, M0):
+  lets GitHub Actions deploy Quiz App stacks through OIDC, with no long-lived keys.
+  Stack name: quizapp-{env}-bootstrap.
+
+  GitHub assumes DeployRole, which can only drive CloudFormation, push agent images,
+  upload SAM artifacts and update the website. CloudFormation itself creates
+  resources using CfnExecutionRole.
+
+Parameters:
+  Env:
+    Type: String
+    AllowedValues: [dev, prod]
+  GitHubRepository:
+    Type: String
+    Description: owner/repo, e.g. my-org/quizapp
+    AllowedPattern: '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+'
+  CreateOidcProvider:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+    Description: The GitHub OIDC provider exists once per account. Set to false for the second environment.
+  ExistingOidcProviderArn:
+    Type: String
+    Default: ''
+    Description: Required when CreateOidcProvider is false.
+
+Conditions:
+  CreateProvider: !Equals [!Ref CreateOidcProvider, 'true']
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub quizapp-${Env}-artifacts-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-artifacts
+            Status: Enabled
+            ExpirationInDays: 30
+
+  CfnExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub quizapp-${Env}-cfn-execution
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: cloudformation.amazonaws.com }
+            Action: sts:AssumeRole
+      # Broad on purpose: CloudFormation creates IAM roles, Lambdas, AgentCore and more.
+      # Only CloudFormation can assume this role, and only DeployRole can pass it.
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub quizapp-${Env}-github-deploy
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If [CreateProvider, !Ref GitHubOidcProvider, !Ref ExistingOidcProviderArn]
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                # Only workflow jobs bound to the matching GitHub Environment can assume this role.
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepository}:environment:${Env}
+      Policies:
+        - PolicyName: deploy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: CloudFormation
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:ListExports
+                Resource: '*'
+              - Sid: PassExecutionRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt CfnExecutionRole.Arn
+              - Sid: Artifacts
+                Effect: Allow
+                Action: [s3:PutObject, s3:GetObject, s3:ListBucket]
+                Resource:
+                  - !GetAtt ArtifactsBucket.Arn
+                  - !Sub ${ArtifactsBucket.Arn}/*
+              - Sid: EcrLogin
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Sid: EcrPush
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                  - ecr:BatchGetImage
+                  - ecr:DescribeImages
+                Resource: !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/quizapp-${Env}-*
+              - Sid: Website
+                Effect: Allow
+                Action: [s3:PutObject, s3:DeleteObject, s3:ListBucket]
+                Resource:
+                  - !Sub arn:aws:s3:::quizapp-${Env}-web-*
+                  - !Sub arn:aws:s3:::quizapp-${Env}-web-*/*
+              - Sid: CloudFrontInvalidate
+                Effect: Allow
+                Action: cloudfront:CreateInvalidation
+                Resource: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/*
+
+Outputs:
+  DeployRoleArn:
+    Description: Set as the AWS_DEPLOY_ROLE_ARN variable on the matching GitHub Environment.
+    Value: !GetAtt DeployRole.Arn
+  CfnExecutionRoleArn:
+    Value: !GetAtt CfnExecutionRole.Arn
+  ArtifactsBucketName:
+    Value: !Ref ArtifactsBucket
+  OidcProviderArn:
+    Condition: CreateProvider
+    Value: !Ref GitHubOidcProvider

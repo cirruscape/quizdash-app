@@ -1,0 +1,16 @@
+{
+  "name": "@quizapp/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@quizapp/contracts": "workspace:*",
+    "@quizapp/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.164"
+  }
+}

@@ -1,0 +1,3 @@
+# Server-authoritative timing; the Host's client triggers Question close
+
+Score depends on answer speed, so the server records when each Question opens and measures every Answer by the time the server receives it, rejecting any Answer that arrives after the deadline. Client clocks are never trusted. Lambdas can't wait for a timer to expire, so instead of a server-side scheduler (Step Functions waits, EventBridge Scheduler) the Host's client calls "close Question" at the deadline. The server also closes a Question early once every Player has answered. This is acceptable because the Host must be connected to advance the Game anyway. If the Host disconnects, the Game simply stalls until they resume.

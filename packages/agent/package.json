@@ -1,0 +1,13 @@
+{
+  "name": "@quizapp/agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@quizapp/contracts": "workspace:*"
+  }
+}
