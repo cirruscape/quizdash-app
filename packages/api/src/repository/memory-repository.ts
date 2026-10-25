@@ -23,6 +23,12 @@ export class MemoryRepository implements GameRepository {
     return quiz ? structuredClone(quiz) : null;
   }
 
+  async listQuizzes(hostId: string): Promise<Quiz[]> {
+    return [...this.quizzes.entries()]
+      .filter(([key]) => key.startsWith(`${hostId}/`))
+      .map(([, quiz]) => structuredClone(quiz));
+  }
+
   async getGame(gameId: string): Promise<StoredGame | null> {
     const stored = this.games.get(gameId);
     return stored ? structuredClone(stored) : null;

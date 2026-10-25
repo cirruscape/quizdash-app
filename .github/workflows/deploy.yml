@@ -3,6 +3,7 @@ name: Deploy
 # Deploys the M0 stacks to dev on every push to main (PLAN §9, §10):
 #   CI -> foundation -> agent image -> agent stack + Spike A smoke test
 #                    -> api stack -> API smoke test
+#                             -> web stack + app
 # Prod deployment (tags, approvals) arrives in M5.
 #
 # Requires a GitHub Environment named "dev" with these variables, taken from the outputs of
@@ -194,6 +195,63 @@ jobs:
             --region "${AWS_REGION}" \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset
+
+  web:
+    needs: api
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build web
+        run: pnpm --filter @quizapp/web build
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy web stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name "quizapp-${APP_ENV}-web" \
+            --template-file infra/web.yaml \
+            --role-arn "${{ vars.CFN_EXECUTION_ROLE_ARN }}" \
+            --parameter-overrides Env="${APP_ENV}" \
+            --no-fail-on-empty-changeset
+
+      - name: Publish the app
+        run: |
+          out() { aws cloudformation describe-stacks --stack-name "quizapp-${APP_ENV}-$1" \
+            --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" --output text; }
+          BUCKET=$(out web BucketName)
+          DISTRIBUTION=$(out web DistributionId)
+          # One build serves every environment; its settings come from config.json (PLAN §9).
+          jq -n \
+            --arg region "$AWS_REGION" \
+            --arg userPoolId "$(out foundation UserPoolId)" \
+            --arg userPoolClientId "$(out foundation UserPoolClientId)" \
+            --arg eventsHttpDomain "$(out api EventsHttpDomain)" \
+            --arg eventsRealtimeDomain "$(out api EventsRealtimeDomain)" \
+            '$ARGS.named' > packages/web/dist/config.json
+          # Content-hashed assets are immutable; index.html and config.json must never go stale.
+          aws s3 sync packages/web/dist/assets "s3://$BUCKET/assets" --delete \
+            --cache-control "public, max-age=31536000, immutable"
+          aws s3 sync packages/web/dist "s3://$BUCKET" --delete --exclude "assets/*" \
+            --cache-control "no-cache"
+          aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" \
+            --paths /index.html /config.json >/dev/null
+          echo "App: $(out web Url)"
 
   smoke:
     needs: api

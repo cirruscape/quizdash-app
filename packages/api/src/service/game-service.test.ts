@@ -268,6 +268,7 @@ describe('playerSnapshot', () => {
     expect(before).toEqual({
       ok: true,
       value: {
+        version: 4,
         phase: 'QUESTION_OPEN',
         me: { playerId: players.Alice!.playerId, nickname: 'Alice', score: 0 },
         question: {
@@ -389,5 +390,30 @@ describe('activeGame', () => {
     const created = await h.service.createGame(HOST, 'quiz1');
     const gameId = created.ok && created.value.gameId;
     expect(await h.service.activeGame(HOST)).toEqual({ ok: true, value: { gameId } });
+  });
+});
+
+describe('listQuizzes', () => {
+  it("lists only the Host's own Ready Quizzes, as summaries", async () => {
+    const { service, repo } = harness();
+    await repo.putQuiz(HOST, { ...sampleQuiz('ready'), topic: 'Capitals' });
+    await repo.putQuiz(HOST, { ...sampleQuiz('draft'), status: 'DRAFT' });
+    await repo.putQuiz('someone-else', sampleQuiz('theirs'));
+
+    expect(await service.listQuizzes(HOST)).toEqual({
+      ok: true,
+      value: [{ quizId: 'ready', topic: 'Capitals', questionCount: 1 }],
+    });
+  });
+});
+
+describe('snapshot versions', () => {
+  it("carry the Game's version, so clients can ignore out-of-date responses", async () => {
+    const { service, gameId, players } = await startedGame('Alice');
+    // created (1), Alice joined (2), started (3)
+    const player = await service.playerSnapshot(players.Alice!);
+    const host = await service.hostSnapshot(HOST, gameId);
+    expect(player.ok && player.value.version).toBe(3);
+    expect(host.ok && host.value.version).toBe(3);
   });
 });

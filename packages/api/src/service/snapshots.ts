@@ -15,6 +15,8 @@ import {
 } from '@quizapp/domain';
 
 export interface PlayerSnapshot {
+  /** The Game's version: a client keeps only the newest snapshot it has seen. */
+  version: number;
   phase: Phase;
   me: { playerId: string; nickname: string; score: number };
   question: {
@@ -34,6 +36,7 @@ export interface PlayerSnapshot {
 
 export function playerSnapshot(
   game: Game,
+  version: number,
   playerId: string,
   now: Instant,
 ): PlayerSnapshot | 'NOT_A_PLAYER' | 'PLAYER_REMOVED' {
@@ -43,6 +46,7 @@ export function playerSnapshot(
   const inQuestion = game.phase === 'QUESTION_OPEN' || game.phase === 'REVEAL';
   const question = game.quiz.questions[game.questionIndex] as Question | undefined;
   return {
+    version,
     phase: game.phase,
     me: { playerId: me.playerId, nickname: me.nickname, score: me.score },
     question:
@@ -72,6 +76,7 @@ function myReveal(game: Game, question: Question, playerId: string): PlayerSnaps
 }
 
 export interface HostSnapshot {
+  version: number;
   gameId: string;
   joinCode: string;
   phase: Phase;
@@ -95,10 +100,11 @@ export interface HostSnapshot {
   serverNow: Instant;
 }
 
-export function hostSnapshot(game: Game, now: Instant): HostSnapshot {
+export function hostSnapshot(game: Game, version: number, now: Instant): HostSnapshot {
   const question = game.quiz.questions[game.questionIndex] as Question | undefined;
   const inQuestion = (game.phase === 'QUESTION_OPEN' || game.phase === 'REVEAL') && question;
   return {
+    version,
     gameId: game.gameId,
     joinCode: game.joinCode,
     phase: game.phase,

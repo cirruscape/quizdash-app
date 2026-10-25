@@ -13,6 +13,7 @@ import {
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
+  QueryCommand,
 } from '@aws-sdk/lib-dynamodb';
 import type { Game, Quiz } from '@quizapp/domain';
 import { ConflictError, type GameRepository, type StoredGame } from './repository.js';
@@ -48,6 +49,24 @@ export class DynamoRepository implements GameRepository {
       }),
     );
     return (res.Item?.quiz as Quiz | undefined) ?? null;
+  }
+
+  async listQuizzes(hostId: string): Promise<Quiz[]> {
+    const quizzes: Quiz[] = [];
+    let ExclusiveStartKey: Record<string, unknown> | undefined;
+    do {
+      const res = await this.db.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          KeyConditionExpression: 'PK = :pk AND begins_with(SK, :quiz)',
+          ExpressionAttributeValues: { ':pk': `HOST#${hostId}`, ':quiz': 'QUIZ#' },
+          ExclusiveStartKey,
+        }),
+      );
+      for (const item of res.Items ?? []) quizzes.push(item.quiz as Quiz);
+      ExclusiveStartKey = res.LastEvaluatedKey;
+    } while (ExclusiveStartKey);
+    return quizzes;
   }
 
   async getGame(gameId: string): Promise<StoredGame | null> {

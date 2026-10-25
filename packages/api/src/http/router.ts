@@ -79,6 +79,12 @@ const ROUTES: Route[] = [
   },
   {
     method: 'GET',
+    pattern: /^\/api\/quizzes$/,
+    auth: 'host',
+    handle: async ({ deps, hostId }) => reply(200, await deps.service.listQuizzes(hostId)),
+  },
+  {
+    method: 'GET',
     pattern: /^\/api\/games\/active$/,
     auth: 'host',
     handle: async ({ deps, hostId }) => {

@@ -34,6 +34,22 @@ pnpm --filter @quizapp/web dev
 
 To lint the templates, you also need cfn-lint (`pip install cfn-lint`). Then run `pnpm lint:infra`.
 
+## Using the app (dev)
+
+1. Open the app URL (the **web** job prints it, or see the `quizapp-dev-web` stack's `Url` output).
+2. **Host:** choose _Host a game_, sign up with your email, and confirm it with the code Cognito sends. Until Quiz generation (M3) exists, give yourself the sample Quiz:
+   ```sh
+   AWS_PROFILE=quizdash corepack pnpm --filter @quizapp/scripts seed -- you@example.com
+   ```
+3. Start a game from the sample Quiz. The Lobby shows a Join Code and a join link.
+4. **Players:** open the join link (or _/play_ plus the code) on phones, pick a Nickname, and play.
+
+To work on the web app locally against dev:
+
+```sh
+QUIZAPP_DEV_URL=https://<the dev CloudFront domain> corepack pnpm --filter @quizapp/web dev
+```
+
 ## Deploying
 
 The **dev** environment is AWS account `587736032611`, reached through the `quizdash` CLI profile. That profile has no default region, so every command passes `--region ap-southeast-2`. The prod account is not yet decided.
@@ -45,6 +61,8 @@ Every push to `main` runs `.github/workflows/deploy.yml`, which deploys to dev:
 3. **agent-image**: bundles the agent and pushes an arm64 image to ECR, tagged with the commit SHA.
 4. **agent**: the `quizapp-dev-agent` stack, then a smoke test that invokes the agent and expects "Canberra" in the reply (Spike A).
 5. **api**: the `quizapp-dev-api` stack (HTTP API, the API Lambda, AppSync Events). This runs in parallel with steps 3 and 4.
+6. **smoke**: plays a whole Game against dev over HTTP and AppSync Events.
+7. **web**: the `quizapp-dev-web` stack (S3 and CloudFront), then the app itself. The job prints the app's URL.
 
 You can also run it from the Actions tab (**Deploy → Run workflow**).
 

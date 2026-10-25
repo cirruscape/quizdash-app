@@ -20,6 +20,7 @@ export interface GameRepository {
   /** Quizzes belong to one Host, and only that Host can read them (FR-1.2). */
   putQuiz(hostId: string, quiz: Quiz): Promise<void>;
   getQuiz(hostId: string, quizId: string): Promise<Quiz | null>;
+  listQuizzes(hostId: string): Promise<Quiz[]>;
 
   getGame(gameId: string): Promise<StoredGame | null>;
   /** Stores a new Game at version 1. Throws ConflictError if the gameId exists. */

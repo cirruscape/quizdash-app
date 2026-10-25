@@ -186,3 +186,16 @@ describe('Player routes', () => {
     expect([again.statusCode, json(again)]).toEqual([409, { error: 'ALREADY_ANSWERED' }]);
   });
 });
+
+describe('GET /api/quizzes', () => {
+  it("lists the signed-in Host's Ready Quizzes", async () => {
+    const { call } = await setup();
+    expect((await call({ method: 'GET', path: '/api/quizzes' })).statusCode).toBe(401);
+
+    const res = await call({ method: 'GET', path: '/api/quizzes', hostId: HOST });
+    expect([res.statusCode, json(res)]).toEqual([
+      200,
+      [{ quizId: 'quiz1', topic: null, questionCount: 1 }],
+    ]);
+  });
+});

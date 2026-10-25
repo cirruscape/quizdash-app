@@ -103,5 +103,17 @@ export function repositoryContract(name: string, makeRepository: () => GameRepos
       expect(await repo.getQuiz(owner, quiz.quizId)).toEqual(quiz);
       expect(await repo.getQuiz(other, quiz.quizId)).toBeNull();
     });
+
+    it("lists a Host's own Quizzes, and only theirs", async () => {
+      const [owner, other] = [uniqueId('host'), uniqueId('host')];
+      const [a, b] = [sampleQuiz(uniqueId('quiz')), sampleQuiz(uniqueId('quiz'))];
+      await repo.putQuiz(owner, a);
+      await repo.putQuiz(owner, b);
+      await repo.putQuiz(other, sampleQuiz(uniqueId('quiz')));
+
+      const listed = await repo.listQuizzes(owner);
+      expect(listed.map((q) => q.quizId).sort()).toEqual([a.quizId, b.quizId].sort());
+      expect(await repo.listQuizzes(uniqueId('host'))).toEqual([]);
+    });
   });
 }

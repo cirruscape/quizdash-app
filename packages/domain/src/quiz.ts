@@ -20,6 +20,8 @@ export interface Question {
 export interface Quiz {
   quizId: string;
   status: QuizStatus;
+  /** What the Quiz is about (GLOSSARY: Topic). Set by generation (M3). */
+  topic?: string;
   defaultTimeLimitSeconds: number;
   questions: Question[];
 }

@@ -1,0 +1,193 @@
+BUILDING A QUIZ APP WITH CLAUDE CODE: PART 9 (M2c, THE WEB APP)
+===============================================================
+
+This continues ai-creation-M2b-pt8.txt. It covers the same Claude Code
+session, from the commit that added part 8 up to this file.
+
+  Tool:   Claude Code (CLI), model Claude Opus 5.5
+  Date:   2026-10-26
+  Starts at:  commit d785bfb (M2b complete, plus part 8)
+  Ends at:    the commit that adds this file
+
+How to read this:
+  USER    is what the developer typed, verbatim.
+  CLAUDE  is Claude's reply, shortened where it was long.
+  [ ... ] marks an action Claude took with its tools. These summarise the
+          action; they are not the raw tool output.
+
+
+------------------------------------------------------------------------------
+1. FOUR DECISIONS BEFORE BUILDING THE SCREENS
+------------------------------------------------------------------------------
+
+USER:
+Smoke test passed - continue to M2c
+
+[The developer had redeployed the bootstrap stack and pushed. The
+ pipeline's new smoke job passed, playing a whole Game against dev.]
+
+CLAUDE:
+1. How the screens stay in sync. ADR 0002 says events can be lost, and
+   snapshots are the truth. The simplest approach that's robust by
+   construction is to render every screen from the snapshot only. A pushed
+   event never updates the screen directly. It just says "something
+   changed", and the client re-fetches its snapshot. A slow poll catches
+   anything lost. The cost is about 100-300 ms of extra delay per update.
+2. Host sign-in: Amplify's ready-made Authenticator, styled to match.
+3. What to test:
+     W1 the sync controller (pure TypeScript): when to re-fetch, and the
+        countdown corrected for clock differences
+     W2 a new GET /api/quizzes route, test-first through S1-S3
+   The screens themselves checked by hand in dev on a phone and a laptop.
+4. Plain CSS, designed for phones first; a join link (/play?code=ABC234),
+   no QR code for now.
+
+USER:
+yes, go with 1–4 as recommended
+
+
+------------------------------------------------------------------------------
+2. W2: THE HOST'S QUIZ LIST, TEST-FIRST
+------------------------------------------------------------------------------
+
+[Claude added an optional Topic to the domain's Quiz. The glossary
+ already had the term, but the type didn't.]
+[Red then green, through each seam:]
+    - repository contract: list a Host's own Quizzes, and only theirs.
+      Passed in memory AND against the real dev DynamoDB table (the
+      DynamoDB version pages through query results).
+    - service: only Ready Quizzes, as summaries
+    - service: snapshots now carry the Game's version, so a slow,
+      out-of-date response can never overwrite a newer one
+    - router: GET /api/quizzes, for signed-in Hosts only
+[Claude added the route to the API stack template too.]
+
+
+------------------------------------------------------------------------------
+3. W1: THE SYNC CONTROLLER
+------------------------------------------------------------------------------
+
+[Claude wrote the sync controller test-first, with fake timers and a fake
+ server whose responses the test releases one at a time:]
+    - fetch on start
+    - on events: re-fetch, folding a burst of events into exactly one
+      follow-up fetch
+    - ignore events for versions already seen, and stale responses
+    - poll when no events arrive, recovering a lost one
+    - re-fetch just after a deadline, on the server's clock, even with
+      the device's clock 10 seconds off
+    - keep going after a failed fetch
+    - do nothing once stopped
+    - a countdown function on the server's clock, never negative
+
+[Claude also tidied its own test helper, which had relied on obscure
+ "var" hoisting.]
+
+
+------------------------------------------------------------------------------
+4. THE SCREENS
+------------------------------------------------------------------------------
+
+[Plumbing: runtime config loaded from /config.json; an API client with
+ plain-language error messages; a browser AppSync Events client that
+ reports only event versions and reconnects with backoff; and a React hook
+ combining the snapshot sync with real-time signals.]
+
+[Player screens:
+   - Join: the code can come from a join link, with a "return to your
+     game" banner
+   - Lobby, Question (big coloured Option tiles, a countdown, "answer
+     locked in"), Reveal (the correct Option, your points and rank),
+     Finished (the final Leaderboard)
+   - a "you were removed" screen, and silent rejoin on reload ]
+[Host screens:
+   - Amplify sign-in and sign-up
+   - Home: resume a Game in progress, or start one from a Ready Quiz
+   - Lobby: a big Join Code, the join link, the Players with Remove
+   - Question: a countdown and "N of M answered". When the countdown
+     reaches zero, the Host's screen asks the server to close the
+     Question, retrying every second until it's closed (ADR 0003)
+   - Reveal: per-Option counts and the Leaderboard, then Next or Finish ]
+
+[Claude caught two problems in its own code before running anything: an
+ unused helper left in the deadline-close effect, and a real race in it
+ (if the screen changed before the token arrived, a timer would leak).
+ It rewrote the effect with a cancellation flag.]
+
+[The first build warned that the bundle was over 500 KB, mostly Amplify's
+ sign-in UI. Players never sign in, so Claude lazy-loaded the whole Host
+ area, then moved Amplify's configuration into it too. A Player's phone
+ now downloads about 88 KB gzipped.]
+
+[Claude found a peer-dependency warning (Amplify UI's xstate dependency
+ declares React up to 18), judged it acceptable because Amplify UI itself
+ supports React 19, and flagged it for the hand test.]
+
+
+------------------------------------------------------------------------------
+5. THE WEB STACK AND PIPELINE
+------------------------------------------------------------------------------
+
+[Claude wrote infra/web.yaml:
+   - a private S3 bucket, readable only by CloudFront
+   - /api/* routed to the HTTP API (same origin, uncached, forwarding the
+     Authorization header)
+   - /config.json never cached
+   - a CloudFront Function serving index.html for app routes. Claude
+     chose this over CloudFront's custom error pages, because those would
+     also have turned the API's real 404 responses into HTML. ]
+[The pipeline's new web job builds the app, deploys the stack, writes
+ config.json from the stacks' outputs (so one build serves every
+ environment), uploads content-hashed assets with long caching and
+ index.html and config.json with none, and invalidates.]
+[Claude checked that the deploy role already had the needed permissions,
+ so no bootstrap redeploy was needed this time.]
+
+CLAUDE:
+M2c's code is written. Every local check passes: format, lint, typecheck,
+and 136 tests, 8 of them new for the sync controller (W1). The screens
+have only been checked by compiling and building; the real test is by
+hand in dev.
+Risks to watch when testing by hand:
+ - Amplify UI and React 19.
+ - No automated tests cover the browser WebSocket client or the screens
+   yet, by agreement.
+
+
+------------------------------------------------------------------------------
+6. THIS FILE
+------------------------------------------------------------------------------
+
+USER:
+Now write a file ./ai-creation-M2c-pt9.txt which describes steps done
+since ./ai-creation-m2b-pt8.txt. Then commit changes
+
+[Claude wrote this file and committed.]
+
+
+------------------------------------------------------------------------------
+WHERE THINGS STAND
+------------------------------------------------------------------------------
+
+M2c's code is complete, but not yet deployed or tested by hand.
+
+Next:
+  1. Push. The pipeline deploys the web stack and prints the app's URL.
+  2. Sign up as a Host in the app; Claude seeds the sample Quiz for that
+     email.
+  3. Play a Game with a laptop and a phone or two, and report anything
+     that looks wrong.
+Then M2d, Game History.
+
+Observations worth blogging about:
+  - The UI design came straight from a failure the smoke test found: since
+    real-time events can be lost, the screens render only from snapshots,
+    which makes them correct by construction.
+  - The tricky client logic (re-fetch timing, clock offsets) was pulled
+    out of React into a pure module, so it could be tested exhaustively
+    with fake timers.
+  - Claude looked at the build's output, not just at whether it built, and
+    cut what Players' phones download by about 80%.
+  - Claude was explicit about what remained unverified (the screens, the
+    browser WebSocket client, Amplify with React 19) rather than calling
+    M2c done.

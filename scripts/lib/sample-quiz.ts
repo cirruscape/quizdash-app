@@ -12,6 +12,7 @@ export function sampleQuiz(quizId = 'sample-quiz'): Quiz {
   return {
     quizId,
     status: 'READY',
+    topic: 'General knowledge',
     defaultTimeLimitSeconds: 20,
     questions: [
       q(1, 'What is the capital city of Australia?', ['Canberra', 'Sydney', 'Melbourne', 'Perth']),
