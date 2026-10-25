@@ -1,9 +1,12 @@
-// AppSync Events Lambda authoriser (PLAN §6, ADR 0002).
-// Players may connect, and may subscribe only to their own Game's players channel.
-// Nobody is ever authorised to publish through this authoriser: publishing is IAM-only.
-// Not yet handled: Host Cognito tokens (M2) and the removed-Player check (M4).
-import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
+// AppSync Events Lambda authoriser (PLAN §6, ADR 0002). Nobody publishes through it:
+// publishing is IAM-only, for the backend.
+//   Players (Player token): may connect, and subscribe only to /game/{theirGame}/players.
+//   Hosts (Cognito token):  may connect, and subscribe to both channels of Games they own.
+// Not yet handled: the removed-Player check (M4).
+import { CognitoJwtVerifier } from 'aws-jwt-verify';
+import { playerTokenKey } from './aws/signing-key.js';
 import { verifyPlayerToken } from './player-token.js';
+import { DynamoRepository } from './repository/dynamo-repository.js';
 
 export interface EventsAuthoriserEvent {
   authorizationToken: string;
@@ -24,39 +27,52 @@ export interface EventsAuthoriserResult {
   handlerContext?: Record<string, string>;
 }
 
+export interface AuthoriserDeps {
+  playerKey: string;
+  nowSeconds: number;
+  /** The Host's ID if the token is a valid Cognito token for our user pool, else null. */
+  verifyHost: (token: string) => Promise<string | null>;
+  /** The Host who owns a Game, or null if there's no such Game. */
+  gameOwner: (gameId: string) => Promise<string | null>;
+}
+
 /** How long AppSync may cache an allow decision. Short, so Player removal takes effect quickly. */
 const ALLOW_TTL_SECONDS = 60;
 
 const DENY: EventsAuthoriserResult = { isAuthorized: false, ttlOverride: 0 };
 
+const CHANNEL = /^\/game\/(?<gameId>[A-Za-z0-9-]{1,50})\/(?<audience>players|host)$/;
+
 export function playersChannel(gameId: string): string {
   return `/game/${gameId}/players`;
 }
 
-export function authorise(
+export async function authorise(
   event: EventsAuthoriserEvent,
-  key: string,
-  nowSeconds: number,
-): EventsAuthoriserResult {
-  const claims = verifyPlayerToken(event.authorizationToken, key, nowSeconds);
-  if (!claims) return DENY;
+  deps: AuthoriserDeps,
+): Promise<EventsAuthoriserResult> {
+  const { operation } = event.requestContext;
+  if (operation === 'EVENT_PUBLISH') return DENY;
+  const channel = normaliseChannel(event.requestContext.channel);
 
-  const allow: EventsAuthoriserResult = {
-    isAuthorized: true,
-    ttlOverride: ALLOW_TTL_SECONDS,
-    handlerContext: { gameId: claims.gameId, playerId: claims.playerId },
-  };
-
-  switch (event.requestContext.operation) {
-    case 'EVENT_CONNECT':
-      return allow;
-    case 'EVENT_SUBSCRIBE':
-      return normaliseChannel(event.requestContext.channel) === playersChannel(claims.gameId)
-        ? allow
-        : DENY;
-    default:
-      return DENY;
+  const player = verifyPlayerToken(event.authorizationToken, deps.playerKey, deps.nowSeconds);
+  if (player) {
+    const allow = {
+      isAuthorized: true,
+      ttlOverride: ALLOW_TTL_SECONDS,
+      handlerContext: { gameId: player.gameId, playerId: player.playerId },
+    };
+    if (operation === 'EVENT_CONNECT') return allow;
+    return channel === playersChannel(player.gameId) ? allow : DENY;
   }
+
+  const hostId = await deps.verifyHost(event.authorizationToken);
+  if (!hostId) return DENY;
+  const allow = { isAuthorized: true, ttlOverride: ALLOW_TTL_SECONDS, handlerContext: { hostId } };
+  if (operation === 'EVENT_CONNECT') return allow;
+  const gameId = CHANNEL.exec(channel ?? '')?.groups?.gameId;
+  if (!gameId) return DENY;
+  return (await deps.gameOwner(gameId)) === hostId ? allow : DENY;
 }
 
 /** AppSync may send channels with or without leading/trailing slashes. */
@@ -65,22 +81,29 @@ function normaliseChannel(channel: string | null): string | null {
   return `/${channel.replace(/^\/+|\/+$/g, '')}`;
 }
 
-const secrets = new SecretsManagerClient({});
-let keyPromise: Promise<string> | undefined;
-
-function signingKey(): Promise<string> {
-  keyPromise ??= secrets
-    .send(new GetSecretValueCommand({ SecretId: process.env.PLAYER_TOKEN_SECRET_ARN }))
-    .then((res) => {
-      if (!res.SecretString) throw new Error('Player token secret is empty');
-      return res.SecretString;
-    })
-    .catch((err: unknown) => {
-      keyPromise = undefined;
-      throw err;
-    });
-  return keyPromise;
-}
+// Created on first use: a Player-only request never needs Cognito or DynamoDB configuration
+// (so this bundle also still works in the Spike B stack, which only sets the secret).
+let hostVerifier: { verify(token: string): Promise<{ sub: string }> } | undefined;
+let repo: DynamoRepository | undefined;
 
 export const handler = async (event: EventsAuthoriserEvent): Promise<EventsAuthoriserResult> =>
-  authorise(event, await signingKey(), Math.floor(Date.now() / 1000));
+  authorise(event, {
+    playerKey: await playerTokenKey(),
+    nowSeconds: Math.floor(Date.now() / 1000),
+    verifyHost: async (token) => {
+      try {
+        hostVerifier ??= CognitoJwtVerifier.create({
+          userPoolId: process.env.USER_POOL_ID as string,
+          clientId: process.env.USER_POOL_CLIENT_ID as string,
+          tokenUse: null, // ID or access token
+        });
+        return (await hostVerifier.verify(token)).sub;
+      } catch {
+        return null; // invalid token, or Host auth not configured here
+      }
+    },
+    gameOwner: async (gameId) => {
+      repo ??= new DynamoRepository(process.env.TABLE_NAME as string);
+      return (await repo.getGame(gameId))?.game.hostId ?? null;
+    },
+  });

@@ -1,0 +1,212 @@
+BUILDING A QUIZ APP WITH CLAUDE CODE: PART 7 (M2a, THE API CORE)
+================================================================
+
+This continues ai-creation-M1-pt6.txt. It covers the same Claude Code
+session, from the commit that added part 6 up to this file.
+
+  Tool:   Claude Code (CLI), model Claude Opus 5.5
+  Date:   2026-10-26
+  Starts at:  commit 6eef4b8 (M1 complete, plus part 6)
+  Ends at:    the commit that adds this file
+
+How to read this:
+  USER    is what the developer typed, verbatim.
+  CLAUDE  is Claude's reply, shortened where it was long.
+  [ ... ] marks an action Claude took with its tools. These summarise the
+          action; they are not the raw tool output.
+
+As in part 6, the work followed the "tdd" skill: agree the seams first,
+then red-green one vertical slice at a time.
+
+
+------------------------------------------------------------------------------
+1. PUSHING BACK ON THE PLAN BEFORE WRITING CODE
+------------------------------------------------------------------------------
+
+USER:
+start M2
+
+[M2 is the biggest milestone so far, so Claude raised the one decision
+ that would be hard to reverse before writing any code.]
+
+CLAUDE:
+1. Storing a Game. decide() works on a whole Game. PLAN §4 proposed
+   splitting it across many DynamoDB items, with Answers as separate
+   write-once items plus atomic counters, so that 50 simultaneous Answers
+   never collide. Two options:
+     (a) One item per Game, written with optimistic locking and retried on
+         conflict. It maps one-to-one onto decide(). A Game is about 50 KB,
+         well under DynamoDB's 400 KB limit. At 50 Players, conflicts cost
+         a handful of retries.
+     (b) PLAN §4's split items. Fewer conflicts, but some rules get
+         enforced twice, once in the domain and once in DynamoDB
+         conditions.
+   My recommendation is (a), with a retry cap and a conflict metric. It
+   departs from PLAN §4, so I'd record it in ADR 0006.
+2. Testing without Docker: handlers against an in-memory repository; the
+   DynamoDB repository against the real dev table.
+3. Splitting M2 into four parts:
+     M2a the API core, M2b the API stack plus an API-only smoke test,
+     M2c the web screens, M2d History.
+
+USER:
+yes, go with (a), that testing approach and the split
+
+[Claude wrote docs/adr/0006-game-stored-as-one-item.md. It then proposed
+ three seams for M2a, each with what it catches and what it misses:
+   S1 the game service (main seam)
+   S2 the HTTP router
+   S3 one repository contract suite, run against both the in-memory fake
+      and real DynamoDB, so the fake can't drift from the real thing ]
+
+USER:
+yes, go with S1–S3
+
+
+------------------------------------------------------------------------------
+2. S3: A REPOSITORY CONTRACT RUN AGAINST REAL DYNAMODB
+------------------------------------------------------------------------------
+
+[Claude built the contract one behaviour at a time, red then green:]
+    - a created Game reads back at version 1
+    - optimistic locking: saving against the version read bumps it, and a
+      stale save throws ConflictError
+    - unknown Games return null, and a Game ID can't be created twice
+    - Join Code claims: one Game at a time, freed on release
+    - one active Game per Host, released only by that same Game, so a late
+      release can't wipe a newer claim
+    - Quizzes stored per Host, so one Host can't read another's
+
+[One test passed on its first run, because Claude had written the
+ duplicate check one slice early. Claude said so, then deliberately
+ removed the check to prove the test could fail.]
+
+[Claude wrote DynamoRepository using the single-table key layout, and ran
+ the same contract against the real quizapp-dev table in the quizdash
+ account. All 6 behaviours passed against real DynamoDB, so the in-memory
+ fake used by every other test is faithful.]
+
+
+------------------------------------------------------------------------------
+3. S1: THE GAME SERVICE, AND A HANG THE TESTS EXPOSED
+------------------------------------------------------------------------------
+
+[Slices, each red then green:]
+    - createGame from the Host's Ready Quiz, claiming a Join Code and the
+      Host's active-Game slot
+    - another Host's Quiz, or a Draft, is refused
+    - a second Game is refused, without leaving a Join Code claimed by no
+      Game (the fix: claim the active-Game slot first)
+    - a colliding Join Code is retried
+    - THE HANG: the next test, where every Join Code collides, didn't fail.
+      It hung. The retry loop was unbounded, and because it only awaited
+      microtasks it even starved vitest's own timeout. Only the outer kill
+      stopped it. Claude capped the retries (JOIN_CODE_UNAVAILABLE),
+      releasing the Host's claim when it gives up.
+    - joinGame returns a Player token, and tells the Host on the host
+      channel inside PLAN §6's event envelope
+    - two Players joining at the same moment both get in. The test runs
+      both at once, so one save genuinely loses the race (a real
+      ConflictError), and the service reloads and decides again.
+    - endless conflicts give up with TOO_MANY_CONFLICTS and publish nothing
+      (verified by deliberately breaking the cap)
+    - hostCommand checks ownership on every retry
+    - submitAnswer: when the last Answer triggers Reveal, the per-Option
+      counts go only to the host channel
+    - a Game that finishes frees its Join Code and the Host's slot
+    - Player snapshots never include the correct Option before Reveal; they
+      show my points and rank during Reveal, "removed" for removed Players,
+      and the Leaderboard once Finished
+    - Host snapshots: the owner only; an answered count during a Question;
+      per-Option counts only from Reveal
+    - activeGame, so any of the Host's devices can resume
+
+[To keep snapshots identical to what the live events showed, Claude
+ extracted revealResults(), leaderboard(), answeredCount() and
+ optionCounts() into the domain, rather than duplicating logic. M1's 54
+ tests confirmed the refactor changed nothing.]
+
+
+------------------------------------------------------------------------------
+4. S2: THE HTTP LAYER, AND THE AWS ADAPTERS
+------------------------------------------------------------------------------
+
+[Router slices, each red then green:]
+    - POST /api/join: 201 with a token, 400 for malformed bodies (via zod
+      schemas in the shared contracts package)
+    - service errors mapped to status codes: 404, 400, 403, 409, and 503
+      for retryable ones
+    - Host routes need the Cognito identity (401 without it)
+    - a full Host journey: resume, start, a 403 for an intruder, inspect,
+      remove a Player, and 409s for the wrong timing or phase
+    - Player routes need a bearer Player token (401 otherwise), then serve
+      the snapshot and accept Answers
+
+[The AWS adapters: the Lambda handler with real dependencies (48-hour
+ Player tokens, cryptographically random Join Codes); an IAM-signed AppSync
+ publisher (five events per request, order kept); and Host support in the
+ real-time authoriser (Cognito-verified, own Games only, never publish),
+ extended test-first from Spike B's tests.]
+
+[A bug caught before deploying: the pipeline still redeploys the Spike B
+ stack, which shares the authoriser bundle but has no Cognito settings.
+ The new handler would have failed every request there, including
+ Players'. Claude made the Host dependencies load only when a Host token
+ actually arrives.]
+
+CLAUDE:
+M2a, the API core, is done. It's all built test-first. The API package has
+59 tests, and 123 pass repo-wide, along with format, lint and typecheck.
+All three Lambdas bundle.
+One departure from the plan: all the HTTP routes run in one Lambda with an
+internal router, instead of one function per route group. It's simpler to
+deploy, and can be split later without code changes. I'll note it in the
+plan.
+
+
+------------------------------------------------------------------------------
+5. THIS FILE
+------------------------------------------------------------------------------
+
+USER:
+Now write a file ./ai-creation-M2a-pt7.txt which describes steps done
+since ./ai-creation-pt6-n1.txt. Then commit m2a changes and start m2b
+
+[The file name in the request didn't exist. Claude said so, took part 6
+ (ai-creation-M1-pt6.txt) as the starting point, recorded the single-Lambda
+ decision in the plan, wrote this file, committed M2a, and started M2b.]
+
+
+------------------------------------------------------------------------------
+WHERE THINGS STAND
+------------------------------------------------------------------------------
+
+M2a (the API core, code only) is complete:
+  packages/api/src/repository/  the GameRepository interface, in-memory
+                                and DynamoDB implementations, and the
+                                shared contract suite
+  packages/api/src/service/     the game service, event routing, snapshots
+  packages/api/src/http/        the router
+  packages/api/src/aws/         the AppSync publisher, signing-key loader
+  packages/api/src/lambda/      the API Lambda handler
+  packages/api/src/events-authoriser.ts  Player and Host real-time auth
+  docs/adr/0006                 one DynamoDB item per Game
+
+Next: M2b, the API stack in CloudFormation (the HTTP API, the Cognito
+authoriser, the Lambda, and AppSync Events moved in from Spike B), a seed
+script, and an API-only smoke test that plays a whole Game with bot
+Players against dev.
+
+Observations worth blogging about:
+  - Claude challenged its own plan (PLAN §4's storage design) once the
+    domain model made a simpler option clear, and asked before changing
+    it, recording the change in an ADR.
+  - The repository fake is verified against real DynamoDB by the same
+    contract suite. That's the defence against tests that pass against a
+    fake that lies.
+  - A test exposed a real hang (an unbounded retry loop) before it could
+    ever reach production.
+  - The concurrency test is real, not mocked: two simultaneous joins
+    genuinely race, and the losing write genuinely retries.
+  - Claude checked how new code would affect infrastructure that was
+    already deployed (the Spike B stack) before pushing.

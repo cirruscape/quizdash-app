@@ -277,6 +277,8 @@ It costs real money, so it runs **on demand only**, not in CI.
 
 Stacks are named `quizapp-{env}-{stack}` and live in ap-southeast-2. They share values through `Export` and `Fn::ImportValue`.
 
+**One API Lambda (M2a):** all HTTP routes run in a single Lambda with an internal router (`packages/api/src/http/router.ts`), not one function per route group as the table below says. It's simpler to deploy and needs only one reserved-concurrency setting. It can be split later without code changes.
+
 **Accounts:**
 
 | Environment | AWS account     | CLI profile |

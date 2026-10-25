@@ -179,6 +179,58 @@ export function decide(game: Game, command: GameCommand, now: Instant): Decision
 }
 
 function reveal(game: Game, now: Instant): Decision {
+  const { pointsByPlayer, optionCounts } = scoreCurrentQuestion(game);
+  const players = game.players.map((p) => ({
+    ...p,
+    score: p.score + (pointsByPlayer.get(p.playerId) ?? 0),
+  }));
+  const revealed: Game = { ...game, phase: 'REVEAL', players, lastActivityAt: now };
+  const results = revealResults(revealed);
+
+  const base = {
+    questionIndex: game.questionIndex,
+    correctOptionId: currentQuestion(game).correctOptionId,
+  };
+  return {
+    ok: true,
+    game: revealed,
+    events: [
+      { type: 'QUESTION_REVEALED', ...base, results },
+      { type: 'QUESTION_REVEALED_HOST', ...base, results, optionCounts },
+    ],
+  };
+}
+
+/**
+ * The Reveal results for a Game in its REVEAL phase, whose Scores already include the current
+ * Question. Exported so a reconnecting client sees exactly what was shown live (FR-8.1).
+ */
+export function revealResults(game: Game): RevealResult[] {
+  const { pointsByPlayer } = scoreCurrentQuestion(game);
+  return rank(activePlayers(game)).map((p) => ({
+    playerId: p.playerId,
+    nickname: p.nickname,
+    points: pointsByPlayer.get(p.playerId) ?? 0,
+    score: p.score,
+    rank: p.rank,
+  }));
+}
+
+/** How many remaining Players have answered the current Question (FR-6.3). */
+export function answeredCount(game: Game): { answered: number; total: number } {
+  return { answered: activeAnswers(game).length, total: activePlayers(game).length };
+}
+
+/** How many Players chose each Option of the current Question; for the Host only (FR-6.7). */
+export function optionCounts(game: Game): Record<string, number> {
+  return scoreCurrentQuestion(game).optionCounts;
+}
+
+/** Points per Player and Answer counts per Option for the current Question (FR-6.7, FR-7.1). */
+function scoreCurrentQuestion(game: Game): {
+  pointsByPlayer: Map<string, number>;
+  optionCounts: Record<string, number>;
+} {
   const question = currentQuestion(game);
   const openedAt = game.questionOpenedAt as Instant;
   const timeLimitMs = (game.deadline as Instant) - openedAt;
@@ -191,42 +243,25 @@ function reveal(game: Game, now: Instant): Decision {
     const correct = a.optionId === question.correctOptionId;
     pointsByPlayer.set(a.playerId, scoreAnswer(correct, a.receivedAt - openedAt, timeLimitMs));
   }
-
-  const players = game.players.map((p) => ({
-    ...p,
-    score: p.score + (pointsByPlayer.get(p.playerId) ?? 0),
-  }));
-  const results: RevealResult[] = rank(players.filter((p) => !p.removed)).map((p) => ({
-    playerId: p.playerId,
-    nickname: p.nickname,
-    points: pointsByPlayer.get(p.playerId) ?? 0,
-    score: p.score,
-    rank: p.rank,
-  }));
-
-  const base = { questionIndex: game.questionIndex, correctOptionId: question.correctOptionId };
-  return {
-    ok: true,
-    game: { ...game, phase: 'REVEAL', players, lastActivityAt: now },
-    events: [
-      { type: 'QUESTION_REVEALED', ...base, results },
-      { type: 'QUESTION_REVEALED_HOST', ...base, results, optionCounts },
-    ],
-  };
+  return { pointsByPlayer, optionCounts };
 }
 
 function finish(game: Game, now: Instant, abandoned: boolean): Decision {
-  const leaderboard: LeaderboardEntry[] = rank(activePlayers(game)).map((p) => ({
+  return {
+    ok: true,
+    game: { ...game, phase: 'FINISHED', lastActivityAt: now },
+    events: [{ type: 'GAME_FINISHED', abandoned, leaderboard: leaderboard(game) }],
+  };
+}
+
+/** The Players still in the Game, ranked by Score (FR-7.4). Removed Players are left off. */
+export function leaderboard(game: Game): LeaderboardEntry[] {
+  return rank(activePlayers(game)).map((p) => ({
     playerId: p.playerId,
     nickname: p.nickname,
     score: p.score,
     rank: p.rank,
   }));
-  return {
-    ok: true,
-    game: { ...game, phase: 'FINISHED', lastActivityAt: now },
-    events: [{ type: 'GAME_FINISHED', abandoned, leaderboard }],
-  };
 }
 
 function removePlayer(game: Game, playerId: string, now: Instant): Decision {
