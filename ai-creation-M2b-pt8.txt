@@ -1,0 +1,203 @@
+BUILDING A QUIZ APP WITH CLAUDE CODE: PART 8 (M2b, THE API STACK AND A REAL SMOKE TEST)
+=====================================================================================
+
+This continues ai-creation-M2a-pt7.txt. It covers the same Claude Code
+session, from the commit that added part 7 up to this file.
+
+  Tool:   Claude Code (CLI), model Claude Opus 5.5
+  Date:   2026-10-26
+  Starts at:  commit 7921efc (M2a complete, plus part 7)
+  Ends at:    the commit that adds this file
+
+How to read this:
+  USER    is what the developer typed, verbatim.
+  CLAUDE  is Claude's reply, shortened where it was long.
+  [ ... ] marks an action Claude took with its tools. These summarise the
+          action; they are not the raw tool output.
+
+
+------------------------------------------------------------------------------
+1. BUILDING THE API STACK AND THE SMOKE TEST
+------------------------------------------------------------------------------
+
+[After committing M2a, Claude started M2b. It wrote:
+   infra/api.yaml
+       - the HTTP API, with a Cognito JWT authoriser on Host routes (the
+         join and Player routes authenticate inside the Lambda instead)
+       - the single API Lambda, and a health check
+       - AppSync Events with its Lambda authoriser, moved in from Spike B
+       - every function with reserved concurrency set
+   foundation.yaml
+       - the app client gets the admin password sign-in flow. Only IAM
+         callers can use it, so the smoke test can sign in a test Host
+         without a browser, without opening a public password flow.
+   deploy.yml
+       - the Spike B job replaced by an api job
+   scripts/seed-quiz.ts
+       - gives a signed-up Host the 5-Question sample Quiz; refuses prod
+   scripts/smoke.ts
+       - a test Host signs in (with a fresh random password each run,
+         never stored), a Quiz is seeded, three bot Players join and
+         subscribe over WebSockets, and the Game plays through
+       - it checks events in order, that the correct Option never leaks,
+         that Option counts appear only on the host channel, the points
+         rules, that the Leaderboard matches the points, and that the
+         Host's slot is freed afterwards ]
+
+[Claude ran cfn-lint, SAM validate, actionlint, typecheck and lint. It
+ explained why it wouldn't deploy by hand: that would mean creating IAM
+ roles outside the pipeline, the kind of action the permission system had
+ stopped earlier. So the deploy would go through the pipeline.]
+
+USER:
+Yes commit changes
+
+[Claude committed 936d6a1. The developer pushed, and the pipeline deployed
+ the foundation change and the new api stack.]
+
+
+------------------------------------------------------------------------------
+2. SMOKE RUN 1: THE AUTHORISER CRASHED ON EVERY CONNECTION
+------------------------------------------------------------------------------
+
+USER:
+pipeline is green, run the smoke test
+
+[Claude ran the smoke test against dev. Sign-in, seeding, the HTTP API
+ with its JWT authoriser, and creating a Game all worked. Then the first
+ WebSocket timed out waiting for "connection_ack".]
+[Claude read the authoriser Lambda's CloudWatch logs and found:
+   TypeError: Cannot read properties of undefined (reading 'replace')
+     at normaliseChannel ]
+
+CLAUDE:
+I found the bug, and it's mine. On a connect, AppSync omits the channel
+field entirely rather than sending null, as I'd assumed from the docs. In
+my M2a rewrite of the authoriser, I moved the channel normalising ahead of
+the connect check, so undefined.replace threw. Every connection then
+failed, Players' included. Spike B's version checked the operation first,
+which is why its live checks passed.
+
+[Fixed test-first. A new unit test uses AppSync's real request shape, with
+ no channel field. It failed with the same TypeError, then passed after the
+ fix.]
+[Claude also improved the smoke test's WebSocket client to report
+ connection errors and closed sockets, instead of timing out silently.]
+[Committed 919aff5; the developer pushed.]
+
+
+------------------------------------------------------------------------------
+3. SMOKE RUN 2: EVENTS THAT SOMETIMES DON'T ARRIVE
+------------------------------------------------------------------------------
+
+USER:
+pipeline is green, run the smoke test
+
+[Connections and subscriptions now worked, and the Host received its
+ events. But the bots timed out waiting for QUESTION_OPENED.]
+
+[Claude investigated step by step rather than guessing:
+   1. Lambda logs: no errors in the API or the authoriser.
+   2. A hand-made, IAM-signed publish: HTTP 200, nothing under "failed".
+      So publishing worked. (Two attempts to run the probe failed on
+      module resolution; Claude moved it into the package that had the
+      signing libraries.)
+   3. Diagnostics: the smoke test now prints every event each client
+      received when it fails. The next run passed Question 1 completely,
+      then showed all three bots missing QUESTION_REVEALED@v12, while the
+      Host's subscription to the very same channel received it.
+   4. The authoriser's logs: it ran 9 times (connects and subscribes),
+      never during delivery, and wasn't throttled. So authorisation wasn't
+      the cause.
+   5. An isolated probe: 3 subscribers x 20 events, all delivered, both
+      with and without a pause after subscribing. So it wasn't timing
+      after subscribing either.
+   6. Documentation: AppSync Events is documented as at-most-once,
+      best-effort delivery. Occasional loss is expected behaviour.]
+
+CLAUDE:
+The design already allows for this. PLAN §2 says events are
+notifications, and that the snapshot is the source of truth. My smoke test
+was what assumed perfect delivery.
+So I'll make the smoke test behave the way real clients must. When an
+expected event doesn't arrive within a few seconds, it falls back to the
+snapshot endpoint and checks the state from there. It also counts lost
+events, so we can see how often it happens.
+
+[Claude rewrote the smoke test's checks on that basis, removed the
+ temporary probe and its dependency, and ran the smoke test twice:]
+
+  • Question 1: opened, answered, revealed
+  • Question 2: opened, answered, revealed
+  • Game finished: 1. Alice 1991, 2. Cara 1976, 3. Bob 0
+  • real-time events lost and recovered from snapshots: 0 of 15
+  SMOKE TEST PASSED          (and again on the second run)
+
+[Claude recorded the rule in ADR 0002. Every client must re-fetch its
+ snapshot on load, on reconnect, when an event's version skips a number,
+ and when an expected event is overdue. This becomes a requirement for the
+ M2c screens.]
+
+Lesson for the blog: the smoke test did its job twice in one afternoon.
+First it caught a real code bug that unit tests built on a guessed request
+shape couldn't see. Then it surfaced a property of a managed service that
+changes how the UI must be built. Claude separated the two systematically
+(logs, a hand-made probe, an isolated experiment, then the docs) before
+changing anything, and fixed the test's assumption rather than hiding the
+loss.
+
+
+------------------------------------------------------------------------------
+4. FINISHING M2b
+------------------------------------------------------------------------------
+
+[Claude deleted the Spike B stack, after listing its resources to confirm
+ it held only its own disposable Lambda, role, secret and Events API.]
+[Claude added a "smoke" job to the pipeline, after the api deploy, so
+ every push plays a whole Game against dev. The deploy role needs new
+ permissions for it: Cognito admin actions for its own test Host, and
+ DynamoDB PutItem/DeleteItem on the dev table. Claude explained that the
+ bootstrap stack must be redeployed before the next push, or the first
+ smoke job will fail.]
+[Claude recorded M2's four-part split and status in the plan.]
+
+
+------------------------------------------------------------------------------
+5. THIS FILE
+------------------------------------------------------------------------------
+
+USER:
+Now write a file ./ai-creation-M2b-pt8.txt which describes steps done
+since ./ai-creation-m2a-pt7.txt. Then commit changes
+
+[Claude wrote this file and committed.]
+
+
+------------------------------------------------------------------------------
+WHERE THINGS STAND
+------------------------------------------------------------------------------
+
+M2b is complete:
+  - quizapp-dev-api is deployed: the HTTP API, the API Lambda, AppSync
+    Events and its authoriser.
+  - The API smoke test passes against dev, and will run in the pipeline
+    after every deploy, once the bootstrap stack is redeployed.
+  - The Spike B stack is gone.
+
+Before the next push: redeploy the bootstrap stack, for the smoke job's
+permissions.
+
+Next: M2c, the web stack (S3 and CloudFront) and the Host and Player
+screens, built to recover from lost events using snapshots (ADR 0002).
+
+Observations worth blogging about:
+  - Real-environment tests catch what unit tests can't: a request shape
+    the docs described one way and the service sent another.
+  - When results were confusing, Claude collected evidence before forming
+    a theory: logs, then a hand-made publish, then per-client diagnostics,
+    then an isolated experiment, then the documentation.
+  - The fix matched the platform rather than fighting it: at-most-once
+    delivery is handled by the snapshot-first design that was already in
+    the plan.
+  - Claude removed temporary diagnostic code and dependencies once they
+    had served their purpose.

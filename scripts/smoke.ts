@@ -51,6 +51,38 @@ async function expectOk(
   return res.json;
 }
 
+/** Pushed events expected, and how many AppSync dropped (it's at-most-once delivery). */
+let expected = 0;
+let lost = 0;
+
+/**
+ * Waits for a pushed event, like a real client. AppSync Events delivers at most once, so if the
+ * event doesn't arrive, fall back to the snapshot, which is the source of truth (PLAN §2).
+ */
+async function eventOrSnapshot<T>(
+  client: EventsClient,
+  match: (e: GameEventEnvelope) => boolean,
+  what: string,
+  fromEvent: (e: GameEventEnvelope) => T,
+  fromSnapshot: () => Promise<T | undefined>,
+): Promise<T> {
+  expected += 1;
+  try {
+    return fromEvent(await client.waitFor(match, what, 5_000));
+  } catch (err) {
+    if (!(err instanceof Error && err.message.startsWith('timed out'))) throw err;
+  }
+  lost += 1;
+  step(`  (event lost: ${what}; recovering from the snapshot)`);
+  const giveUpAt = Date.now() + 10_000;
+  while (Date.now() < giveUpAt) {
+    const value = await fromSnapshot();
+    if (value !== undefined) return value;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error(`neither the event nor the snapshot showed ${what}`);
+}
+
 try {
   step('signing in the smoke-test Host');
   const host = await signInSmokeHost(
@@ -114,19 +146,32 @@ try {
   step('three bot Players joined and subscribed');
 
   const pointsByName: Record<string, number> = { Alice: 0, Bob: 0, Cara: 0 };
+  const playerSnapshot = (bot: { token: string }) =>
+    expectOk('GET', '/api/play', { token: bot.token });
+  const hostSnapshot = () => expectOk('GET', `/api/games/${gameId}`, { token: host.idToken });
+  const questionIndexOf = (snapshot: Record<string, unknown>) =>
+    (snapshot.question as { questionIndex?: number } | null)?.questionIndex;
 
   for (let questionIndex = 0; questionIndex < quiz.questions.length; questionIndex++) {
     const command = questionIndex === 0 ? 'start' : 'next';
     await expectOk('POST', `/api/games/${gameId}/${command}`, { token: host.idToken });
 
     for (const bot of bots) {
-      const opened = await bot.events.waitFor(
+      await eventOrSnapshot(
+        bot.events,
         (e) => e.type === 'QUESTION_OPENED' && e.payload.questionIndex === questionIndex,
         `QUESTION_OPENED ${questionIndex} for ${bot.name}`,
+        (e) => {
+          assert.equal(JSON.stringify(e).includes('correct'), false, 'correct Option leaked');
+          return true;
+        },
+        async () => {
+          const snap = await playerSnapshot(bot);
+          return snap.phase === 'QUESTION_OPEN' && questionIndexOf(snap) === questionIndex
+            ? true
+            : undefined;
+        },
       );
-      assert.equal(JSON.stringify(opened).includes('correct'), false, 'correct Option leaked');
-      const snapshot = await expectOk('GET', '/api/play', { token: bot.token });
-      assert.equal(snapshot.phase, 'QUESTION_OPEN');
       await expectOk('POST', '/api/play/answers', {
         token: bot.token,
         body: { questionIndex, optionId: bot.option },
@@ -134,42 +179,70 @@ try {
     }
 
     // Everyone answered, so the Question closes early.
-    const hostReveal = await hostEvents.waitFor(
+    const optionCounts = await eventOrSnapshot(
+      hostEvents,
       (e) => e.type === 'QUESTION_REVEALED_HOST' && e.payload.questionIndex === questionIndex,
       `QUESTION_REVEALED_HOST ${questionIndex}`,
+      (e) => e.payload.optionCounts,
+      async () => {
+        const snap = await hostSnapshot();
+        const reveal = snap.reveal as { optionCounts: unknown } | null;
+        return snap.phase === 'REVEAL' && questionIndexOf(snap) === questionIndex
+          ? reveal?.optionCounts
+          : undefined;
+      },
     );
-    assert.deepEqual(hostReveal.payload.optionCounts, { a: 2, b: 1, c: 0, d: 0 });
+    assert.deepEqual(optionCounts, { a: 2, b: 1, c: 0, d: 0 });
 
     for (const bot of bots) {
-      const reveal: GameEventEnvelope = await bot.events.waitFor(
+      const mine = await eventOrSnapshot(
+        bot.events,
         (e) => e.type === 'QUESTION_REVEALED' && e.payload.questionIndex === questionIndex,
         `QUESTION_REVEALED ${questionIndex} for ${bot.name}`,
+        (e) => {
+          assert.equal('optionCounts' in e.payload, false, 'Host-only data on players channel');
+          const results = e.payload.results as { nickname: string; points: number }[];
+          const entry = results.find((r) => r.nickname === bot.name);
+          assert.ok(entry, `${bot.name} missing from results`);
+          return { correctOptionId: e.payload.correctOptionId, points: entry.points };
+        },
+        async () => {
+          const snap = await playerSnapshot(bot);
+          const reveal = snap.reveal as { correctOptionId: string; myPoints: number } | null;
+          return snap.phase === 'REVEAL' && questionIndexOf(snap) === questionIndex && reveal
+            ? { correctOptionId: reveal.correctOptionId, points: reveal.myPoints }
+            : undefined;
+        },
       );
-      assert.equal(reveal.payload.correctOptionId, 'a');
-      assert.equal('optionCounts' in reveal.payload, false, 'Host-only data on players channel');
-      const results = reveal.payload.results as { nickname: string; points: number }[];
-      const mine = results.find((r) => r.nickname === bot.name);
-      assert.ok(mine, `${bot.name} missing from results`);
+      assert.equal(mine.correctOptionId, 'a');
       // Correct and well inside the 20 s Time Limit: more than 500 points. Wrong: 0 (FR-7.1, 7.2).
-      if (bot.option === 'a')
-        assert.ok(mine.points > 500 && mine.points <= 1000, `${bot.name} points`);
-      else assert.equal(mine.points, 0);
+      if (bot.option === 'a') {
+        assert.ok(mine.points > 500 && mine.points <= 1000, `${bot.name} points ${mine.points}`);
+      } else {
+        assert.equal(mine.points, 0);
+      }
       pointsByName[bot.name] = (pointsByName[bot.name] ?? 0) + mine.points;
     }
     step(`Question ${questionIndex + 1}: opened, answered, revealed`);
   }
 
   await expectOk('POST', `/api/games/${gameId}/next`, { token: host.idToken });
-  const finished = await bots[0]!.events.waitFor(
+  const board = (await eventOrSnapshot(
+    bots[0]!.events,
     (e) => e.type === 'GAME_FINISHED',
     'GAME_FINISHED',
-  );
-  const board = finished.payload.leaderboard as { nickname: string; score: number; rank: number }[];
+    (e) => e.payload.leaderboard,
+    async () => {
+      const snap = await playerSnapshot(bots[0]!);
+      return snap.phase === 'FINISHED' ? snap.leaderboard : undefined;
+    },
+  )) as { nickname: string; score: number; rank: number }[];
   assert.equal(board.length, 3);
   for (const entry of board) assert.equal(entry.score, pointsByName[entry.nickname]);
   assert.equal(board.find((e) => e.nickname === 'Bob')?.rank, 3);
   for (let i = 1; i < board.length; i++) assert.ok(board[i - 1]!.score >= board[i]!.score);
   step(`Game finished: ${board.map((e) => `${e.rank}. ${e.nickname} ${e.score}`).join(', ')}`);
+  step(`real-time events lost and recovered from snapshots: ${lost} of ${expected}`);
 
   const active = await expectOk('GET', '/api/games/active', { token: host.idToken });
   assert.equal(active.gameId, null, "the Host's active-Game slot should be free");
@@ -177,6 +250,9 @@ try {
   console.log('\nSMOKE TEST PASSED');
 } catch (err) {
   console.error('\nSMOKE TEST FAILED:', err instanceof Error ? err.message : err);
+  for (const [i, c] of clients.entries()) {
+    console.error(`  client ${i === 0 ? 'host' : `bot ${i}`}: ${c.received()}`);
+  }
   process.exitCode = 1;
 } finally {
   for (const c of clients) c.close();

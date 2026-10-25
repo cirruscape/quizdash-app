@@ -2,7 +2,7 @@ name: Deploy
 
 # Deploys the M0 stacks to dev on every push to main (PLAN §9, §10):
 #   CI -> foundation -> agent image -> agent stack + Spike A smoke test
-#                    -> api stack
+#                    -> api stack -> API smoke test
 # Prod deployment (tags, approvals) arrives in M5.
 #
 # Requires a GitHub Environment named "dev" with these variables, taken from the outputs of
@@ -194,3 +194,28 @@ jobs:
             --region "${AWS_REGION}" \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset
+
+  smoke:
+    needs: api
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: API smoke test (a whole Game over HTTP and AppSync Events)
+        run: pnpm --filter @quizapp/scripts smoke

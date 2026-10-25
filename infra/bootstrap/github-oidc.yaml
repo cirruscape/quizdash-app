@@ -154,6 +154,20 @@ Resources:
                 Resource:
                   - !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/quizapp_${Env}_*
                   - !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/quizapp_${Env}_*/runtime-endpoint/*
+              # The API smoke test (scripts/smoke.ts): manage and sign in its own test Host...
+              - Sid: SmokeTestHost
+                Effect: Allow
+                Action:
+                  - cognito-idp:AdminGetUser
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:AdminSetUserPassword
+                  - cognito-idp:AdminInitiateAuth
+                Resource: !Sub arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*
+              # ...and seed its Quiz and clear its active-Game claim.
+              - Sid: SmokeTestData
+                Effect: Allow
+                Action: [dynamodb:PutItem, dynamodb:DeleteItem]
+                Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/quizapp-${Env}
               - Sid: CloudFrontInvalidate
                 Effect: Allow
                 Action: cloudfront:CreateInvalidation

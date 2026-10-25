@@ -354,6 +354,12 @@ Each milestone lists what gets built, then **Done when**, the condition for call
 
 ### M2: Live play with a seeded Quiz
 
+- **Split into four parts (agreed 2026-10-26):**
+  - **M2a, the API core:** done.
+  - **M2b, the api stack, seed script and API smoke test:** done. The smoke test plays a whole Game against dev on every deploy.
+  - **M2c, the web stack and screens:** next. Clients must recover from lost events using snapshots (ADR 0002).
+  - **M2d, History:** after M2c.
+
 - **Back end:**
   - the DynamoDB repository;
   - the routes `POST /games`, `start`, `close`, `next`, `GET /games/{id}`, `GET /games/active`, `POST /join`, `GET /play` and `POST /play/answers`;

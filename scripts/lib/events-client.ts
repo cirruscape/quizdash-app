@@ -80,6 +80,13 @@ export class EventsClient {
     return this.until(() => this.events.find(match), `event: ${what}`, timeoutMs);
   }
 
+  /** Everything received so far, for failure diagnostics. */
+  received(): string {
+    const events = this.events.map((e) => `${e.type}@v${e.version}`);
+    const other = this.pending.map((m) => m.type);
+    return `events [${events.join(', ')}], messages [${other.join(', ')}]`;
+  }
+
   close(): void {
     this.socket.close();
   }
