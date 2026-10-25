@@ -57,8 +57,11 @@ aws cloudformation deploy --profile quizdash --region ap-southeast-2 \
   --stack-name quizapp-dev-bootstrap \
   --template-file infra/bootstrap/github-oidc.yaml \
   --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides Env=dev GitHubRepository=<owner>/<repo>
+  --parameter-overrides Env=dev GitHubRepository=cirruscape/quizdash-app \
+    GitHubSubjectPrefix=repo:cirruscape@235645298/quizdash-app@1432826993
 ```
+
+`GitHubSubjectPrefix` must match the start of the OIDC `sub` claim GitHub sends. This repo uses GitHub's immutable subject format, which includes the owner and repo IDs. Look it up with `curl -s https://api.github.com/repos/cirruscape/quizdash-app/actions/oidc/customization/sub` (`sub_claim_prefix`). For a repo using the classic format, leave the parameter out.
 
 The GitHub OIDC provider exists only once per AWS account. If the account already has one, add `CreateOidcProvider=false ExistingOidcProviderArn=<arn>`.
 

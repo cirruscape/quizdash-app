@@ -16,6 +16,15 @@ Parameters:
     Type: String
     Description: owner/repo, e.g. my-org/quizapp
     AllowedPattern: '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+'
+  GitHubSubjectPrefix:
+    Type: String
+    Default: ''
+    Description: >-
+      The OIDC "sub" claim prefix GitHub sends for this repo. Leave empty for the classic
+      format (repo:owner/repo). Repos using immutable subjects send
+      repo:owner@ownerId/repo@repoId, shown as sub_claim_prefix by
+      GET /repos/{owner}/{repo}/actions/oidc/customization/sub.
+    AllowedPattern: '(repo:[A-Za-z0-9_.@-]+/[A-Za-z0-9_.@-]+)?'
   CreateOidcProvider:
     Type: String
     AllowedValues: ['true', 'false']
@@ -28,6 +37,7 @@ Parameters:
 
 Conditions:
   CreateProvider: !Equals [!Ref CreateOidcProvider, 'true']
+  ClassicSubject: !Equals [!Ref GitHubSubjectPrefix, '']
 
 Resources:
   GitHubOidcProvider:
@@ -86,7 +96,10 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
                 # Only workflow jobs bound to the matching GitHub Environment can assume this role.
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepository}:environment:${Env}
+                token.actions.githubusercontent.com:sub: !If
+                  - ClassicSubject
+                  - !Sub repo:${GitHubRepository}:environment:${Env}
+                  - !Sub ${GitHubSubjectPrefix}:environment:${Env}
       Policies:
         - PolicyName: deploy
           PolicyDocument:
