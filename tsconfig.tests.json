@@ -1,0 +1,11 @@
+{
+  // Typechecks test files, which each package's build config excludes and vitest doesn't check.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true
+  },
+  "include": ["packages/*/src/**/*.test.ts"]
+}

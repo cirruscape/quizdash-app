@@ -120,16 +120,16 @@ This is a learning project for a small number of users. It will be built entirel
 - **FR-4.4** During the Lobby, the Host sees the Join Code and a live list of Players who have joined.
 - **FR-4.5** Players can join **only** during the Lobby. Late joining is not supported. Once the first Question opens, new joins are rejected with a "This game has already started" message.
 - **FR-4.6** A Game has at most 50 Players. Join attempts beyond that are rejected with a "This game is full" message.
-- **FR-4.7** The Host starts the Game from the Lobby, which opens the first Question.
+- **FR-4.7** The Host starts the Game from the Lobby, which opens the first Question. It needs at least one Player who hasn't been removed.
 
 ### 5.5 Nicknames
 
-- **FR-5.1** A Nickname must be 2–16 characters, using letters, digits and spaces only. It is trimmed before checking.
-- **FR-5.2** A Nickname must be unique within its Game. The comparison ignores case and treats repeated spaces as one, so "Sam", "sam" and "S am" clash. The Nickname is displayed as the Player typed it, trimmed.
+- **FR-5.1** A Nickname must be 2–16 characters, using unaccented ASCII letters (A–Z, a–z), digits and spaces only, so "Zoë" is not allowed. It is trimmed before checking.
+- **FR-5.2** A Nickname must be unique within its Game. The comparison ignores case and treats repeated spaces as one, so "Sam Smith", "sam smith" and "Sam Smith" clash. The Nickname is displayed as the Player typed it, trimmed.
 - **FR-5.3** Every Nickname is checked with Amazon Comprehend toxic-content detection. It is rejected if any toxicity category scores **≥ 0.5**. This threshold is configurable without a code change.
 - **FR-5.4** Nicknames are also checked against a small maintained blocklist, to catch obvious leetspeak or short forms the classifier misses.
 - **FR-5.5** A rejected Nickname gets a generic prompt, "Please choose a different nickname", which doesn't say why.
-- **FR-5.6** The Host can remove any Player at any time, as a backstop for anything the checks miss. A removed Player's device cannot rejoin that Game.
+- **FR-5.6** The Host can remove any Player at any time, as a backstop for anything the checks miss. A removed Player's device cannot rejoin that Game. Their Nickname stays taken for the rest of that Game.
 
 ### 5.6 Live play
 
@@ -189,7 +189,7 @@ This is a learning project for a small number of users. It will be built entirel
   - The Host can resume their unfinished Game from any device where they are signed in.
   - While the Host is away, the Game simply waits: no Question closes or advances without them.
   - If a Question's deadline passes while the Host is away, Answers are already rejected by the deadline (FR-6.4). The Question moves to Reveal as soon as the Host resumes.
-- **FR-8.4** **Abandonment.** A Game with no activity for 24 hours is automatically Finished. Its partial Leaderboard is recorded in history.
+- **FR-8.4** **Abandonment.** A Game with no activity for 24 hours is automatically Finished. Its partial Leaderboard is recorded in history. Answers to a Question that was still open aren't scored, so the partial Leaderboard reflects revealed Questions only.
 
 ### 5.9 Game history
 

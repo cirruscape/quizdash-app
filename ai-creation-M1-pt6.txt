@@ -1,0 +1,209 @@
+BUILDING A QUIZ APP WITH CLAUDE CODE: PART 6 (M1, THE DOMAIN RULES, TEST-FIRST)
+===============================================================================
+
+This continues ai-creation-pt5-nova.txt. It covers the same Claude Code
+session, from the commit that added part 5 up to this file.
+
+  Tool:   Claude Code (CLI), model Claude Opus 5.5
+  Date:   2026-10-26
+  Starts at:  commit c183d49 (M0 complete, plus part 5)
+  Ends at:    the commit that adds this file
+
+How to read this:
+  USER    is what the developer typed, verbatim.
+  CLAUDE  is Claude's reply, shortened where it was long.
+  [ ... ] marks an action Claude took with its tools. These summarise the
+          action; they are not the raw tool output.
+
+Skill used: "tdd" from the mattpocock-skills plugin. It enforces strict
+red-green test-driven development: agree the public "seams" to test before
+writing any test, then work in vertical slices (one failing test, then the
+minimal code to pass it, repeated). Expected values must come from the
+spec, never be recomputed the way the code computes them.
+
+
+------------------------------------------------------------------------------
+1. AGREEING WHAT TO TEST BEFORE WRITING ANY TEST
+------------------------------------------------------------------------------
+
+[Claude loaded the TDD skill. Following it, Claude wrote no tests until the
+ developer agreed the seams.]
+
+CLAUDE:
+Before writing any test, the TDD approach asks us to agree the seams: the
+public interfaces the tests go through. Here's my proposal, based on
+PLAN §7 and the PRD's rules in §5.4-5.8.
+
+  A. decide(game, command, now), the Game state machine (main seam)
+     Catches: every phase rule, joining, Answers, deadlines, early close,
+     removal, abandonment, plus scoring and ranking as they appear in
+     Reveal and Finished results.
+     Misses: persistence, concurrency races, event publishing (M2).
+  B. normaliseNickname(raw)  - length, characters, uniqueness key
+  C. generateJoinCode(random) - the alphabet with no look-alikes
+  D. canApprove(quiz)         - a Draft needs at least 5 Questions
+
+Two calls I'd like you to confirm:
+ 1. Should scoring and ranking be tested through decide, not as separate
+    seams? Then the tests survive if those helpers move.
+ 2. Should I add a Join command, which PLAN §7 left out? The PRD's joining
+    rules are Game rules too.
+
+USER:
+yes, go with A–D and both decisions
+
+
+------------------------------------------------------------------------------
+2. RED, GREEN, REPEAT: ABOUT 30 VERTICAL SLICES
+------------------------------------------------------------------------------
+
+[Claude re-read the PRD's exact rules first, because each test's expected
+ values had to come from the spec.]
+
+[Claude found a contradiction in the PRD straight away. FR-5.2's rule says
+ the comparison treats repeated spaces as one, but its example claimed
+ "Sam" and "S am" clash, which the rule doesn't produce. Claude tested the
+ rule and later fixed the example.]
+
+[Claude then ran the loop one slice at a time. Each slice was a single new
+ test, a run showing it fail (red), the minimal code, and a run showing it
+ pass (green). The slices, in order:]
+
+  Seam B, Nicknames:
+    - display trimmed; key lowercased
+    - repeated spaces collapse in the key
+    - 2-16 characters; letters, digits and spaces only (boundaries tested)
+  Seam C, Join Codes:
+    - 2,000 random codes all match the spec and use the whole alphabet
+    - the extremes of the random source still map into the alphabet
+  Seam D, Quiz approval:
+    - a Draft with 5 or more Questions is approvable; 4 isn't; other
+      statuses aren't
+  Seam A, the Game state machine:
+    - a Player joins the Lobby
+    - a clashing Nickname is refused
+    - the 50th Player is accepted, the 51st refused
+    - Start opens Question 1, with the deadline from the server clock, and
+      the event never includes the correct Option
+    - no joining after the start
+    - an Answer updates the Host's "N of M answered" count
+    - Close at the deadline reveals speed-weighted points, shared ranks
+      for ties, and Option counts for the Host only
+    - Close before the deadline is refused
+    - the last Answer closes the Question early
+    - an Answer at exactly the deadline is accepted (500 points); one
+      millisecond later it's refused
+    - no second Answer
+    - Answers from strangers, for the wrong Question, or with invalid
+      Options are refused
+    - Next opens the following Question, and Scores accumulate
+    - after the last Question, the Game finishes with the final Leaderboard
+    - every command is refused in the wrong phase (this caught real bugs:
+      a stray Start mid-Game would have restarted Question 1)
+    - removing Players: from the count, closing the Question when the last
+      unanswered Player is removed, from the results and final
+      Leaderboard, and their device can't rejoin
+    - abandonment: only after 24 hours idle, from any phase, keeping the
+      partial Leaderboard
+    - a Question's own Time Limit drives both the deadline and the scoring
+
+[Every expected point value was worked out by hand from the PRD's formula,
+ round(1000 - 500 x elapsed / limit), and stated in the test before the
+ code existed. For example: correct at 10 of 20 seconds is 750; at 4 of 20
+ is 900; at 1 of 20 is 975; with a 40-second override, 10 seconds is 875.]
+
+[One test passed on its first run: the Time Limit override was already
+ handled. A test that has never failed might not be able to, so Claude
+ deliberately broke the code, confirmed the test then failed, and restored
+ the code.]
+
+
+------------------------------------------------------------------------------
+3. A GAP FOUND ALONG THE WAY: TESTS WERE NEVER TYPECHECKED
+------------------------------------------------------------------------------
+
+[While tidying the package's exports, Claude noticed that every package's
+ build config excludes test files, and vitest doesn't typecheck. So type
+ errors in tests across the whole repo had never been caught. Claude added
+ tsconfig.tests.json and made "pnpm typecheck" cover both. To prove the
+ new check works, it planted a type error in a test, saw it caught, and
+ removed it.]
+
+
+------------------------------------------------------------------------------
+4. CLAUDE SURFACES ITS OWN JUDGEMENT CALLS
+------------------------------------------------------------------------------
+
+CLAUDE:
+M1's rules are implemented and tested. All of it was written test-first:
+each test failed before the code that made it pass.
+Decisions I made that you should check:
+ 1. Accented letters are rejected, so "Zoë" isn't allowed. I followed the
+    plan's ASCII-only rule; the PRD only says "letters".
+ 2. A removed Player's Nickname stays taken for the rest of that Game.
+ 3. Abandoning mid-Question doesn't score that Question's Answers.
+ 4. A Host can start a Game with no Players. No rule forbids it. Should
+    Start require at least one Player?
+ 5. Not yet in the domain: the per-Question Option counts that History
+    needs. I've left those for M2.
+
+USER:
+Answer 4 - a game should require at least 1 player; other decisions are
+correct
+
+[Claude handled the change test-first too. The new test (no Players, and
+ everyone removed) failed, then a one-line rule made it pass.]
+[Claude wrote all four decisions into the PRD (FR-4.7, FR-5.1, FR-5.6,
+ FR-8.4), so they're part of the spec and not only in the conversation.
+ It also fixed the FR-5.2 example.]
+[Final checks: format, lint, typecheck (now including tests) and 86 tests
+ across the repo, 54 of them in the domain package.]
+
+
+------------------------------------------------------------------------------
+5. THIS FILE
+------------------------------------------------------------------------------
+
+USER:
+Now write a file ./ai-creation-M1-pt6.txt which describes steps done since
+./ai-creation-pt5-nova.txt. Then commit changes
+
+[Claude wrote this file and committed M1.]
+
+
+------------------------------------------------------------------------------
+WHERE THINGS STAND
+------------------------------------------------------------------------------
+
+M1 (the domain core) is complete:
+  packages/domain/src/game.ts       decide(): the Game state machine
+  packages/domain/src/scoring.ts    scoreAnswer() and rank(), used by the
+                                    Reveal and the Leaderboard
+  packages/domain/src/nickname.ts   normaliseNickname()
+  packages/domain/src/join-code.ts  generateJoinCode()
+  packages/domain/src/quiz.ts       the Quiz types and canApprove()
+All of it is pure TypeScript with no I/O. An ESLint rule keeps AWS and
+Node imports out.
+
+Carried into M2:
+  - The per-Question Option counts that Game History needs (FR-9.1).
+  - Persistence and concurrency, which the API layer handles: decide() is
+    the rulebook, and the DynamoDB writes in PLAN §4 enforce it under
+    concurrent requests.
+
+Next: M2, live play with a seeded Quiz. That covers the HTTP API, the
+DynamoDB repository, real-time events, the Host and Player screens,
+reconnecting, and a smoke test.
+
+Observations worth blogging about:
+  - Claude agreed what to test before writing a single test, and asked
+    before adding a command the plan hadn't listed.
+  - Tests used hand-worked numbers from the spec, so they can't simply
+    agree with a buggy formula.
+  - Claude checked that a test which passed first time could actually
+    fail, by breaking the code on purpose.
+  - Writing tests against the spec exposed a contradiction in the PRD and
+    a repo-wide gap (tests never typechecked). Claude fixed both, and
+    proved the fix worked.
+  - Claude listed its own judgement calls for review instead of burying
+    them. One was overturned, and that change was made test-first too.
