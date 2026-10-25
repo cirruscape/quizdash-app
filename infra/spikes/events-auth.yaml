@@ -1,0 +1,81 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  Spike B (PLAN §10, M0): AppSync Events with a Lambda authoriser that lets Players
+  subscribe only to /game/{gameId}/players and never publish, while IAM can publish.
+  Self-contained and disposable. Stack name: quizapp-dev-spike-events.
+  Bundle first with: pnpm --filter @quizapp/api bundle
+
+Resources:
+  PlayerTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Spike B Player token signing key.
+      GenerateSecretString:
+        PasswordLength: 64
+        ExcludePunctuation: true
+
+  AuthoriserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../../packages/api/dist-lambda/events-authoriser
+      Handler: index.handler
+      Runtime: nodejs22.x
+      Architectures: [arm64]
+      MemorySize: 256
+      Timeout: 5
+      # Required on every Lambda by the account's Tbs::Devops::LambdaCfnHooks hook.
+      ReservedConcurrentExecutions: 20
+      Environment:
+        Variables:
+          PLAYER_TOKEN_SECRET_ARN: !Ref PlayerTokenSecret
+          NODE_OPTIONS: --enable-source-maps
+      Policies:
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Ref PlayerTokenSecret
+
+  EventsApi:
+    Type: AWS::AppSync::Api
+    Properties:
+      Name: quizapp-dev-spike-events
+      EventConfig:
+        AuthProviders:
+          - AuthType: AWS_IAM
+          - AuthType: AWS_LAMBDA
+            LambdaAuthorizerConfig:
+              AuthorizerUri: !GetAtt AuthoriserFunction.Arn
+              AuthorizerResultTtlInSeconds: 60
+              # Rejects anything not shaped like a JWT before the Lambda is invoked.
+              IdentityValidationExpression: ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$
+        ConnectionAuthModes:
+          - AuthType: AWS_IAM
+          - AuthType: AWS_LAMBDA
+        # Only IAM principals (the backend) may publish.
+        DefaultPublishAuthModes:
+          - AuthType: AWS_IAM
+        DefaultSubscribeAuthModes:
+          - AuthType: AWS_LAMBDA
+
+  AuthoriserInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref AuthoriserFunction
+      Principal: appsync.amazonaws.com
+      SourceArn: !GetAtt EventsApi.ApiArn
+
+  GameNamespace:
+    Type: AWS::AppSync::ChannelNamespace
+    Properties:
+      ApiId: !GetAtt EventsApi.ApiId
+      Name: game
+
+Outputs:
+  ApiId:
+    Value: !GetAtt EventsApi.ApiId
+  HttpDomain:
+    Value: !GetAtt EventsApi.Dns.Http
+  RealtimeDomain:
+    Value: !GetAtt EventsApi.Dns.Realtime
+  PlayerTokenSecretArn:
+    Value: !Ref PlayerTokenSecret

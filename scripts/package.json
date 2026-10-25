@@ -1,0 +1,20 @@
+{
+  "name": "@quizapp/scripts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "spike:events": "tsx --conditions=@quizapp/source spike-events.ts"
+  },
+  "dependencies": {
+    "@aws-crypto/sha256-js": "^5.2.0",
+    "@aws-sdk/client-cloudformation": "^3.1156.0",
+    "@aws-sdk/client-secrets-manager": "^3.1156.0",
+    "@aws-sdk/credential-provider-node": "^3.972.88",
+    "@quizapp/api": "workspace:*",
+    "@smithy/signature-v4": "^5.7.4"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
+  }
+}

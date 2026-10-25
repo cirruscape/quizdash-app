@@ -3,14 +3,29 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./player-token": {
+      "@quizapp/source": "./src/player-token.ts",
+      "types": "./dist/player-token.d.ts",
+      "default": "./dist/player-token.js"
+    },
+    "./events-authoriser": {
+      "@quizapp/source": "./src/events-authoriser.ts",
+      "types": "./dist/events-authoriser.d.ts",
+      "default": "./dist/events-authoriser.js"
+    }
+  },
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "bundle": "node bundle.mjs"
   },
   "dependencies": {
     "@quizapp/contracts": "workspace:*",
-    "@quizapp/domain": "workspace:*"
+    "@quizapp/domain": "workspace:*",
+    "@aws-sdk/client-secrets-manager": "^3.1156.0"
   },
   "devDependencies": {
-    "@types/aws-lambda": "^8.10.164"
+    "@types/aws-lambda": "^8.10.164",
+    "esbuild": "^0.28.2"
   }
 }

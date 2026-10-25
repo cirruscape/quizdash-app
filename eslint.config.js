@@ -4,7 +4,15 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/.tsbuild/**', '**/.aws-sam/**', '**/coverage/**'] },
+  {
+    ignores: [
+      '**/dist/**',
+      '**/dist-lambda/**',
+      '**/.tsbuild/**',
+      '**/.aws-sam/**',
+      '**/coverage/**',
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

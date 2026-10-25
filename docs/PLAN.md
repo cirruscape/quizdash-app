@@ -277,6 +277,11 @@ It costs real money, so it runs **on demand only**, not in CI.
 
 Stacks are named `quizapp-{env}-{stack}` and live in ap-southeast-2. They share values through `Export` and `Fn::ImportValue`.
 
+**Account constraints** (found during Spike B):
+
+- The account runs a CloudFormation Hook, `Tbs::Devops::LambdaCfnHooks`, that rejects any Lambda function without `ReservedConcurrentExecutions`. Every function must set it. The account has 2,000 concurrent executions in total, with about 1,885 unreserved at the time of the spike.
+- Lambdas are bundled by `packages/api/bundle.mjs` (esbuild) into `dist-lambda/<name>/`, and SAM zips that folder as-is. SAM's own esbuild builder runs `npm install`, which breaks pnpm `workspace:*` dependencies. This replaces the "esbuild through SAM" choice in D9.
+
 | Stack           | Resources                                                                                                                                                                                                                                                                                                                                                                                                                         | Exports                                                          |
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | **foundation**  | DynamoDB table + GSI1 (PITR on in prod); Cognito user pool + app client (email/password); ECR repository `quizapp-agent`; Secrets Manager secret for Player tokens; SSM parameters `/quizapp/{env}/toxicityThreshold` (default `0.5`)                                                                                                                                                                                             | table name/ARN, user pool ID/ARN, client ID, ECR URI, secret ARN |

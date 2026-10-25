@@ -1,0 +1,434 @@
+BUILDING A QUIZ APP WITH CLAUDE CODE: PART 1
+============================================
+
+This is the input and output of a single Claude Code session, which took an
+empty directory to a designed and scaffolded application.
+
+  Tool:     Claude Code (CLI), model Claude Opus 5.5
+  Dates:    2026-10-24 to 2026-10-25
+  Starting point: an empty directory, /home/bryce/dev/quizapp
+
+How to read this:
+  USER    is what the developer typed, verbatim.
+  CLAUDE  is Claude's reply as shown in the terminal. The question rounds are
+          reproduced in full. Long final summaries are shortened slightly.
+  [ ... ] marks an action Claude took with its tools (reading or writing files,
+          running commands, searching the web). These summarise the action;
+          they are not the raw tool output.
+
+Skills used: "grill-with-docs", a community skill from the mattpocock-skills
+plugin. It interviews the developer in rounds of questions, and records agreed
+terms in a GLOSSARY.md and agreed decisions as ADRs (Architecture Decision
+Records) as it goes.
+
+
+------------------------------------------------------------------------------
+1. KICK-OFF
+------------------------------------------------------------------------------
+
+USER:
+/mattpocock-skills:grill-with-docs
+
+[Claude loaded the "grilling" and "domain-modeling" skills.]
+[Claude listed the working directory. It was empty: no code, no glossary,
+ no ADRs.]
+
+CLAUDE:
+The quizapp directory is empty: no code, no GLOSSARY.md, no ADRs. So we're
+starting from nothing. I'll create GLOSSARY.md as soon as we settle the first
+term.
+
+These are the root questions. Everything else depends on them.
+
+Q1 - What is a quiz app *for*? Who uses it and why?
+  (a) Self-study / spaced repetition: one person drills their own question
+      sets, like Anki.
+  (b) Classroom / assessment: someone authors a Quiz, others take it, and
+      results are scored and reviewed.
+  (c) Live party/trivia: a host runs a game in real time and players answer
+      on their phones, like Kahoot.
+  (d) Something else.
+  -> I'd guess (b), author-and-take.
+
+Q2 - Who are the actors? Under (b): the Author creates Quizzes and the Taker
+     answers them. Can one person be both? Are Takers anonymous, or do they
+     have identities whose history persists?
+  -> One person can be both. Takers must be identified so their results
+     persist.
+
+Q3 - Scope of this first version: is this a learning or side project, or
+     something meant to ship to real users?
+  -> It's a small personal project, so we optimise for simplicity.
+
+Q4 - What does "quiz" mean to you? Is a Quiz a fixed, ordered list of
+     Questions, or a pool that each attempt draws from?
+  -> It's a fixed, ordered list of Questions for v1.
+
+
+------------------------------------------------------------------------------
+2. ROUND 2: LIVE TRIVIA
+------------------------------------------------------------------------------
+
+USER:
+Q1. c, Q2. Yes, Q3. learning for small number of users currently, to be
+deployed ion AWS with serverless resources
+
+CLAUDE:
+Live trivia changes the shape a lot. Your "yes" to Q2 was answering a question
+I wrote for the author-and-take model, so I'll reframe it rather than assume
+it carries over. On AWS serverless, live play means we'll need a push channel:
+API Gateway WebSockets, AppSync subscriptions, or IoT Core. I'll hold that
+until the gameplay questions are settled.
+
+Q1 - Roles: Author, Host, Player. Should the Author and Host be the same
+     person, with an account that owns their Quizzes? Should Players be
+     anonymous, joining with a nickname and keeping no history afterwards?
+  -> Yes. The Host has an account and owns their Quizzes. Players are
+     anonymous and only exist for one Game.
+
+Q2 - Quiz vs Game. A Quiz is reusable content: the questions and answers. A
+     Game is one live run of a Quiz, with its Players, answers and scores.
+  -> Use Quiz and Game as defined.
+
+Q3 - Quiz structure: a fixed, ordered list of Questions?
+  -> Yes for v1.
+
+Q4 - Joining: a short Join Code, say 6 characters, shown by the Host, plus a
+     nickname. No login.
+  -> Yes. Nicknames must be unique within a Game.
+
+Q5 - Where Questions are displayed:
+  (a) Kahoot style: the Host's screen shows the Question, and phones show
+      only answer buttons.
+  (b) Self-contained: every device shows the full Question.
+  -> (b). It's simpler and works remotely.
+
+Q6 - Pacing: the Host advances, and each Question has a timer.
+Q7 - Question types: multiple choice only, with 2-4 options and one correct.
+Q8 - Scoring: speed-weighted, with 500-1000 points for a correct answer.
+
+
+------------------------------------------------------------------------------
+3. ROUND 3: THE FIRST GLOSSARY
+------------------------------------------------------------------------------
+
+USER:
+Q1 yes, Q2 yes, Q3 yes, Q4 yes, Q5 b
+
+[Claude created GLOSSARY.md with these terms: Quiz, Question, Game, Join Code,
+ Host, Player. Each has a one-line definition and a list of words to avoid,
+ e.g. "Author", "session", "room".]
+
+CLAUDE:
+I've created GLOSSARY.md. Q6-Q8 are still open, so I'll carry them into this
+round. New questions:
+
+Q9  - Reconnecting: the device silently rejoins as the same Player.
+Q10 - Late joining: allow it, starting the late Player at 0?
+Q11 - After a Game ends: ephemeral, or kept as history?
+      -> Ephemeral for v1.
+Q12 - Authoring Quizzes: an in-app editor, file upload, or both?
+      -> An in-app editor.
+
+
+------------------------------------------------------------------------------
+4. ROUND 4: THE GENAI TWIST
+------------------------------------------------------------------------------
+
+USER:
+Q6 yes, Q7 yes, Q8 yes, Q9 yes, Q10 no, Q11 Keep history, Q12 Author
+specifies quiz topic and difficulty, and whether to reuse a previously-used
+(saved) question set, or let question/answers be created as a new question
+set automatically and saved via a GenAI invocation
+
+CLAUDE:
+Two glossary issues come first.
+ - You said "Author". We settled that the Host writes and runs Quizzes, with
+   "Author" on the avoid list. I'll read "Author" as Host.
+ - You said "question set". Is that just a Quiz, or something distinct?
+
+[Claude added Option and Lobby to the glossary.]
+
+Q13 - Is a "question set" a Quiz, with Topic and Difficulty as attributes?
+Q14 - Trusting generated answers: LLMs sometimes mark the wrong Option as
+      correct. Add a review step where the Host can discard or regenerate
+      individual Questions?
+Q15 - Generation inputs: a free-text Topic; Easy, Medium or Hard; 5-20
+      Questions; one Quiz-wide time limit.
+Q16 - Reuse scope: the Host's own Quizzes only, or a shared library?
+Q17 - Make generation a separate step from starting a Game?
+Q18 - What history keeps: the Quiz, the date, the final Leaderboard, and
+      answer counts per Question.
+Q19 - Model platform: Claude through Amazon Bedrock?
+
+
+------------------------------------------------------------------------------
+5. ROUND 5: ARCHITECTURE STARTS TO FORM
+------------------------------------------------------------------------------
+
+USER:
+Yes to all questions above, with exception of: Q15 allow default question
+time to be overidden for a question. Note for Q19 we will host this with AWS
+bedrock agentcore with strands sdk and nodejs/typescript
+
+[Claude added Topic, Difficulty, Time Limit, Answer, Score and Leaderboard to
+ the glossary.]
+
+CLAUDE:
+AgentCore with Strands in TypeScript looks like it'll be worth an ADR. A
+future reader will ask why an agent runtime is being used for what might be a
+single structured-output call.
+
+Q20 - Quiz lifecycle: Draft -> Ready, where Ready Quizzes are immutable.
+Q21 - What the agent does: one structured-output call, or generate then
+      verify?
+      -> Generate then verify. Wrong answers are the biggest risk.
+Q22 - Avoid repeating the Host's earlier Questions?
+Q23 - Real-time channel:
+  (a) API Gateway WebSocket API with Lambda and DynamoDB
+  (b) AppSync Events
+  (c) IoT Core MQTT
+  -> (b), AppSync Events.
+Q24 - Timing authority: the server keeps the time, and the Host's client
+      triggers each Question's close.
+Q25 - Host disconnects mid-Game: resume from any device, and auto-finish
+      after 24 hours.
+Q26 - Host sign-in with Amazon Cognito.
+Q27 - Frontend: one React SPA on S3 and CloudFront.
+
+
+------------------------------------------------------------------------------
+6. ROUND 6: THE FIRST ADRs
+------------------------------------------------------------------------------
+
+USER:
+Yes to all
+
+[Claude checked the current Claude model guidance.]
+[Claude added Draft Quiz and Ready Quiz to the glossary.]
+[Claude wrote three ADRs:
+   docs/adr/0001-quiz-generation-agent-on-agentcore.md
+   docs/adr/0002-appsync-events-for-live-play.md
+   docs/adr/0003-server-time-host-triggered-close.md ]
+
+CLAUDE:
+Q28 - Model: Claude Opus 5.5 for both generating and verifying.
+Q29 - Game phases: Lobby -> Question Open -> Reveal -> ... -> Finished.
+Q30 - What Players and the Host each see at Reveal.
+Q31 - Cap a Game at 50 Players.
+Q32 - Should the Host be able to remove a Player?
+Q33 - At most one unfinished Game per Host.
+Q34 - Join Code format: 6 uppercase characters, with no look-alike
+      characters.
+Q35 - Ties share a rank.
+Q36 - 20 generations per Host per day, and a plain error when a Topic is
+      refused.
+Q37 - Poll for generation progress.
+Q38 - Monorepo, deployed with AWS CDK?
+
+
+------------------------------------------------------------------------------
+7. ROUND 7: THE DEVELOPER OVERRIDES TWO RECOMMENDATIONS
+------------------------------------------------------------------------------
+
+USER:
+Yes to all, with the following exceptions: Q32 - validate a user's entered
+nickname against AWs Comprehend for rudeness/toxicity; only allow clean names
+and request the user to change anything that's not; rather than relying on
+host to check. Q38. Yes - but using Cloudformation templates/stacks as IaC,
+not CDK
+
+[Claude added Question Open, Reveal, Finished and Nickname to the glossary.]
+
+CLAUDE:
+Q39 - Keep Host removal as a backstop to the Comprehend check?
+Q40 - How strict the Nickname check is: a 0.5 threshold, a blocklist,
+      2-16 characters, and a generic rejection message.
+Q41 - Region: us-east-1?
+Q42 - Which flavour of CloudFormation: plain, with the SAM transform, or
+      with a packaging script? -> SAM.
+Q43 - Why CloudFormation over CDK? This one is yours to answer, and I'll
+      record your reason in an ADR.
+Q44 - Splitting the stacks: foundation, agent, api, web.
+Q45 - dev and prod environments, deployed from GitHub Actions via OIDC.
+
+
+------------------------------------------------------------------------------
+8. ROUND 8: REGION AND FACT-CHECKING
+------------------------------------------------------------------------------
+
+USER:
+Yes to all, exception: Q41 - deploy everything to ap-southeast-2, Q43.
+developers are highly-skilled in cloudformation already and is preference,
+not skilled in CDK
+
+[Claude searched the web for service availability in ap-southeast-2:
+   - Comprehend toxicity detection: available
+   - AgentCore Runtime: available
+   - Claude Opus 5.5 on Bedrock: not confirmed ]
+[Claude wrote docs/adr/0004-cloudformation-sam-not-cdk.md.]
+
+CLAUDE:
+Q46 - Where the model runs: use a geographic inference profile, falling back
+      to global.
+Q47 - Have we reached a shared understanding? [Claude summarised the whole
+      design.]
+
+
+------------------------------------------------------------------------------
+9. SHARED UNDERSTANDING
+------------------------------------------------------------------------------
+
+USER:
+Yes to all
+
+CLAUDE:
+We've reached a shared understanding: every branch of the design is settled.
+Here is what's now in the directory:
+ - GLOSSARY.md: about 20 agreed terms, each with words to avoid
+ - docs/adr/: four decision records
+I also saved a memory that your team works in CloudFormation rather than CDK
+and deploys to ap-southeast-2. A good next step would be a PRD or an
+implementation plan.
+
+
+------------------------------------------------------------------------------
+10. THE PRD
+------------------------------------------------------------------------------
+
+USER:
+write the PRD
+
+[Claude wrote docs/PRD.md. It contains a summary, goals and non-goals, roles,
+ 20 user stories, numbered functional requirements with a Game state diagram,
+ a UX outline, non-functional requirements, a technical approach, and a table
+ of assumptions.]
+
+CLAUDE:
+I've written the PRD at docs/PRD.md. Eight things in it weren't settled
+during our grilling, so I made an assumption for each and listed them in §9.
+They are: the scoring formula, Time Limit bounds, Nickname case handling, the
+minimum number of Questions to approve, Player real-time auth, the rule for
+"everyone has answered", the model inference profile, and the Host's view
+during a Question. Want me to run a quick round on them?
+
+USER:
+Yes
+
+[Claude looked up the inference profile itself instead of asking: Opus 5.5 is
+ inference-profile only on Bedrock, and from Sydney it uses
+ au.anthropic.claude-opus-5-5. Claude updated ADR 0001 and the PRD.]
+
+CLAUDE:
+A1 - Scoring formula: linear, from 1000 down to 500.
+A2 - Time Limit bounds: 5-120 seconds.
+A3 - Nickname uniqueness ignores case.
+A4 - At least 5 Questions to approve a Quiz.
+A5 - A signed Player token, checked by a Lambda authoriser that allows
+     subscribing only.
+A6 - Removed Players don't count towards "everyone has answered", and
+     disconnected Players do.
+A8 - The Host sees "N of M answered" during a Question.
+A9 - A deadline that passes while the Host is away.
+
+USER:
+Yes to all
+
+[Claude folded every answer into the PRD's requirements, cleared its
+ open-questions section, and added the Player token design to ADR 0002.]
+
+
+------------------------------------------------------------------------------
+11. THE IMPLEMENTATION PLAN
+------------------------------------------------------------------------------
+
+USER:
+write the implementation plan
+
+[Claude wrote docs/PLAN.md. It contains an architecture diagram, the repo
+ layout, a single-table DynamoDB model, every HTTP route mapped to its PRD
+ requirement, the real-time events, the domain package interface, a sequence
+ diagram for Quiz generation, the CloudFormation stacks, six milestones
+ (M0-M5) each with a "Done when" condition, and 12 defaults Claude had chosen
+ on its own.]
+
+CLAUDE:
+I've written the plan at docs/PLAN.md, organised as six milestones:
+ M0 Foundations and spikes, M1 Domain core, M2 Live play with a seeded Quiz,
+ M3 Quiz generation, M4 Moderation, M5 Production.
+Section 11 lists 12 defaults I chose that we never discussed.
+
+
+------------------------------------------------------------------------------
+12. SCAFFOLDING
+------------------------------------------------------------------------------
+
+USER:
+The above defaults are good; start scaffolding the repo
+
+[Claude checked the toolchain: Node 24, the AWS CLI and the SAM CLI were
+ installed. pnpm, Docker and cfn-lint were not.]
+[Claude looked up current package versions. It pinned TypeScript to 6.0,
+ because typescript-eslint doesn't support TypeScript 7 yet.]
+[Claude created the pnpm workspace with five packages: domain, contracts,
+ api, agent and web. It added an ESLint rule that keeps the domain package
+ free of AWS and Node imports.]
+[Claude wrote infra/foundation.yaml (DynamoDB, Cognito, ECR, a secret and an
+ SSM parameter) and infra/bootstrap/github-oidc.yaml (the GitHub OIDC deploy
+ role).]
+[Claude wrote the CI workflow and a README.]
+[Claude ran every check. The first run had four failures: missing Node
+ types, a lint error on generated files, vite missing from the root
+ packages, and two docs that needed formatting. A YAML quoting error
+ appeared later in the CloudFormation lint. Claude fixed them all and
+ re-ran until everything passed.]
+
+CLAUDE:
+The repo is scaffolded as a pnpm monorepo, and every check passes locally:
+format, lint, typecheck, the web build, 4 tests, and cfn-lint on both
+templates. Nothing has been deployed or committed.
+Blockers for the rest of M0:
+ - Docker isn't available in this WSL distro, and Spike A needs it.
+ - The bootstrap stack needs your GitHub owner/repo.
+ - Deploying creates real AWS resources, so I'll wait for your go-ahead.
+Do you want me to make the initial commit now?
+
+
+------------------------------------------------------------------------------
+13. COMMIT
+------------------------------------------------------------------------------
+
+USER:
+yes, commit it. Next write a file ./ai-creation-pt1.txt which shows
+input/output of this claude session up to this point, which I can use to
+document how Claude has been used to create the application for a blog.
+Then do spike B.
+
+[Claude made the initial commit, 24fd2a5: "Scaffold monorepo, domain docs and
+ foundation infrastructure".]
+[Claude wrote this file.]
+
+
+------------------------------------------------------------------------------
+WHAT THE SESSION PRODUCED
+------------------------------------------------------------------------------
+
+  GLOSSARY.md           about 20 domain terms, each with words to avoid
+  docs/PRD.md           product requirements, with every assumption resolved
+  docs/PLAN.md          architecture, data model, API, events, milestones
+  docs/adr/0001-0004    four architecture decision records
+  packages/*            a TypeScript monorepo scaffold, with passing tests
+  infra/*.yaml          CloudFormation foundation and bootstrap stacks
+  .github/workflows     CI
+
+What the developer decided, and where Claude only recommended:
+  - The developer chose live trivia over Claude's first guess (classroom
+    quizzes).
+  - The developer introduced AI-generated Quizzes, and the AgentCore and
+    Strands stack.
+  - The developer chose Comprehend Nickname moderation over Claude's
+    proposal of Host moderation.
+  - The developer chose CloudFormation over Claude's proposal of CDK.
+  - The developer chose ap-southeast-2 over Claude's proposal of us-east-1.
+  - Claude made the rest of the recommendations, and the developer accepted
+    them round by round.
