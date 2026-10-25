@@ -240,7 +240,7 @@ This section summarises the decisions; the ADRs hold the rationale.
   - **Publishing** is done only by the backend, using IAM.
 - **Timing:** the server keeps the time, and the Host's client triggers each Question's close. See [ADR 0003](./adr/0003-server-time-host-triggered-close.md).
 - **Storage:** DynamoDB for Quizzes, Games, Players, Answers and history.
-- **Quiz generation:** a Strands Agents (TypeScript) agent, hosted on Amazon Bedrock AgentCore Runtime, calling **Claude Opus 5.5** on Amazon Bedrock to both generate and verify Questions. It uses the Australia geographic inference profile `au.anthropic.claude-opus-5-5`, which routes between Sydney and Melbourne, because Opus 5.5 has no in-region model ID. See [ADR 0001](./adr/0001-quiz-generation-agent-on-agentcore.md).
+- **Quiz generation:** a Strands Agents (TypeScript) agent, hosted on Amazon Bedrock AgentCore Runtime, calling **Claude Opus 5.5** on Amazon Bedrock to both generate and verify Questions. It uses the Australia geographic inference profile `au.anthropic.claude-opus-5-5`, which routes between Sydney and Melbourne, because Opus 5.5 has no in-region model ID. See [ADR 0001](./adr/0001-quiz-generation-agent-on-agentcore.md). _Temporarily, until the account has Anthropic access, the agent uses Amazon Nova 2 Lite (`global.amazon.nova-2-lite-v1:0`). Every model call goes through the Bedrock Converse API, and the model is configuration, so switching back needs no code change (ADR 0005)._
 - **Nickname moderation:** Amazon Comprehend toxic-content detection, plus a blocklist.
 - **Infrastructure as code:** CloudFormation with the SAM transform, split into these stacks:
   - **foundation**: DynamoDB, Cognito, ECR;

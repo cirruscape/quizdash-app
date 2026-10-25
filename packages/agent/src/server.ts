@@ -3,6 +3,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { z } from 'zod';
 import { createAnswerer, type Answerer } from './answerer.js';
+import { modelConfigFromEnv } from './model.js';
 
 const PORT = 8080;
 const MAX_BODY_BYTES = 64 * 1024;
@@ -55,10 +56,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const answer = createAnswerer({
-    region: process.env.AWS_REGION ?? 'ap-southeast-2',
-    modelId: process.env.MODEL_ID ?? 'au.anthropic.claude-opus-5-5',
-  });
+  const answer = createAnswerer(modelConfigFromEnv());
   createServer((req, res) => void createRouter(answer)(req, res)).listen(PORT, '0.0.0.0', () =>
     console.log(`agent listening on 0.0.0.0:${PORT}`),
   );

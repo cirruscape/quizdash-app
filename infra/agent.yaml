@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   Quiz App generation agent (PLAN §8, §9; Spike A): an AgentCore Runtime running the
-  Strands container image, allowed to call Claude Opus 5.5 through the Australian
-  Bedrock inference profile. Stack name: quizapp-{env}-agent.
+  Strands container image, allowed to call one Bedrock model (ModelId) through the
+  Converse API. Stack name: quizapp-{env}-agent.
 
 Parameters:
   Env:
@@ -12,10 +12,18 @@ Parameters:
     Type: String
     Description: Tag of the agent image in the foundation stack's ECR repository (the git SHA).
     AllowedPattern: '[A-Za-z0-9._-]+'
+  # The model is configuration (ADR 0005). Swap both parameters together, for example
+  # back to au.anthropic.claude-opus-5-5 / anthropic.claude-opus-5-5 once Anthropic access is granted.
   ModelId:
     Type: String
-    Default: au.anthropic.claude-opus-5-5
-    Description: Bedrock inference profile ID the agent calls.
+    Default: global.amazon.nova-2-lite-v1:0
+    Description: Bedrock inference profile ID the agent calls (geographic or global profile).
+    AllowedPattern: '[a-z]+\.[A-Za-z0-9.:-]+'
+  FoundationModelId:
+    Type: String
+    Default: amazon.nova-2-lite-v1:0
+    Description: The foundation model behind ModelId (ModelId without its profile prefix).
+    AllowedPattern: '[A-Za-z0-9.:-]+'
 
 Resources:
   ExecutionRole:
@@ -81,15 +89,24 @@ Resources:
                 Resource:
                   - !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default
                   - !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/quizapp_${Env}_generator-*
-              # The au. profile routes between Sydney (ap-southeast-2) and Melbourne
-              # (ap-southeast-4), so the model must be allowed in both Regions.
-              - Sid: InvokeOpusViaAuProfile
+              # Converse API only (ADR 0005). The agent streams via ConverseStream, which needs
+              # InvokeModelWithResponseStream; InvokeModel covers non-streaming Converse.
+              # The profile may route to the model in any destination Region; the foundation-model
+              # grants are limited to requests that arrive through our profile. The region-less
+              # ARN is what global profiles are authorised against.
+              - Sid: InvokeModelViaProfile
+                Effect: Allow
+                Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+                Resource: !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${ModelId}
+              - Sid: InvokeFoundationModelThroughProfile
                 Effect: Allow
                 Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
                 Resource:
-                  - !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${ModelId}
-                  - arn:aws:bedrock:ap-southeast-2::foundation-model/anthropic.claude-opus-5-5
-                  - arn:aws:bedrock:ap-southeast-4::foundation-model/anthropic.claude-opus-5-5
+                  - !Sub arn:aws:bedrock:*::foundation-model/${FoundationModelId}
+                  - !Sub arn:aws:bedrock:::foundation-model/${FoundationModelId}
+                Condition:
+                  StringEquals:
+                    bedrock:InferenceProfileArn: !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${ModelId}
 
   Runtime:
     Type: AWS::BedrockAgentCore::Runtime

@@ -1,0 +1,10 @@
+# Models are called only through the Bedrock Converse API, and chosen by configuration
+
+Every model call goes through the Amazon Bedrock Converse API, via Strands' `BedrockModel` using `ConverseStream`, the Converse API's streaming form, so responses can be streamed. The model is chosen by configuration: the agent stack's `ModelId` (an inference profile) and `FoundationModelId` parameters, passed to the agent as `MODEL_ID`. We prefer Converse to the provider-specific `InvokeModel` request formats and SDKs, such as the Anthropic SDK, because it lets us swap models without code changes. That matters now: the dev account has no Anthropic model access yet, so the agent temporarily uses **Amazon Nova 2 Lite** (`global.amazon.nova-2-lite-v1:0`) instead of Claude Opus 5.5 (ADR 0001), and will switch back by changing those two parameters.
+
+## Consequences
+
+- Models are constructed only in `packages/agent/src/model.ts`. ESLint rejects `InvokeModelCommand`, `InvokeModelWithResponseStreamCommand`, Strands' non-Bedrock model providers, and constructing `BedrockModel` anywhere else.
+- Only portable Converse settings are used: no `temperature` or `topP`, which Claude Opus 5.5 rejects. Provider-specific features, such as Anthropic's native structured outputs, are off the table. Structured results must come from Converse tool use (Strands' structured output), which both Nova 2 Lite and Claude support.
+- Nova 2 Lite has no Australian or APAC profile, so from ap-southeast-2 requests go through the global profile and can be processed in any commercial Region. That's acceptable because prompts contain no personal data (PRD §7). Switching back to `au.anthropic.claude-opus-5-5` restores Australia-only processing.
+- The agent's IAM role grants only `bedrock:InvokeModelWithResponseStream` (needed for ConverseStream) and `bedrock:InvokeModel` (non-streaming Converse), on the inference profile, plus the foundation model wherever that profile routes. The foundation-model grant is conditioned on `bedrock:InferenceProfileArn`, and includes the region-less ARN that global profiles require.

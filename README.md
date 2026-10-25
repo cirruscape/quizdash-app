@@ -75,7 +75,7 @@ The GitHub OIDC provider exists only once per AWS account. If the account alread
 
 The deploy role trusts only jobs that run in this Environment.
 
-**3. Enable Claude Opus 5.5 in Amazon Bedrock** for the account in ap-southeast-2, if you haven't already. The Spike A smoke test calls it through the `au.anthropic.claude-opus-5-5` inference profile, and fails with an access error until the model is enabled.
+**3. Bedrock model access.** The agent currently uses **Amazon Nova 2 Lite**, through the global inference profile `global.amazon.nova-2-lite-v1:0`, because the account doesn't have Anthropic access yet. The intended model is Claude Opus 5.5 (`au.anthropic.claude-opus-5-5`). To switch, change the `ModelId` and `FoundationModelId` defaults in `infra/agent.yaml` and push. No code change is needed (ADR 0005).
 
 **4. Existing Spike B stack:** `quizapp-dev-spike-events` was first deployed by hand. The pipeline takes it over: later updates run through the CloudFormation execution role.
 

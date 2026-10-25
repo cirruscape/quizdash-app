@@ -43,7 +43,7 @@ flowchart LR
 
   L -- async invoke --> GW[Generation worker Lambda]
   GW --> AC[AgentCore Runtime<br/>Strands TS agent]
-  AC --> BR[Bedrock<br/>au.anthropic.claude-opus-5-5]
+  AC --> BR[Bedrock Converse<br/>MODEL_ID: Nova 2 Lite for now,<br/>Opus 5.5 intended]
   GW --> DDB
 
   SCH[EventBridge Scheduler<br/>hourly] --> SW[Abandonment sweeper Lambda] --> DDB
@@ -222,7 +222,7 @@ sequenceDiagram
   participant API as POST /quizzes
   participant W as Worker Lambda
   participant A as AgentCore (Strands)
-  participant B as Bedrock (Opus 5.5)
+  participant B as Bedrock Converse (MODEL_ID)
   H->>API: topic, difficulty, count, time limit
   API->>API: quota ADD (≤20/day) · put Quiz GENERATING
   API-->>W: async invoke
@@ -242,7 +242,7 @@ sequenceDiagram
 ### Agent (`packages/agent`)
 
 - **Runtime:** Strands Agents SDK (TypeScript), in a container on AgentCore Runtime.
-- **Model:** `au.anthropic.claude-opus-5-5` through Bedrock, with adaptive thinking.
+- **Model:** whatever `MODEL_ID` names, always through the Bedrock Converse API (ADR 0005). It's temporarily Amazon Nova 2 Lite (`global.amazon.nova-2-lite-v1:0`) until the account has Anthropic access, and Claude Opus 5.5 (`au.anthropic.claude-opus-5-5`) is the intended model. The pipeline should only use portable Converse features, so it runs on either.
 - **Modes**, with inputs and outputs defined as zod schemas in `contracts`:
   - `generate`, with input `{topic, difficulty, count, avoid: string[]}`. The output has exactly `count` Questions if possible.
   - `regenerateQuestion`, with input `{topic, difficulty, avoid: string[]}`, where `avoid` includes every other Question in the Draft.
@@ -294,7 +294,7 @@ The dev account also hosts unrelated `qd-*` production stacks. Quiz App stacks m
 | Stack           | Resources                                                                                                                                                                                                                                                                                                                                                                                                                         | Exports                                                          |
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | **foundation**  | DynamoDB table + GSI1 (PITR on in prod); Cognito user pool + app client (email/password); ECR repository `quizapp-agent`; Secrets Manager secret for Player tokens; SSM parameters `/quizapp/{env}/toxicityThreshold` (default `0.5`)                                                                                                                                                                                             | table name/ARN, user pool ID/ARN, client ID, ECR URI, secret ARN |
-| **agent**       | `AWS::BedrockAgentCore::Runtime` (container image `{ecr}:{gitSha}` passed as a parameter); IAM role allowing `bedrock:InvokeModel*` on the `au.anthropic.claude-opus-5-5` inference profile and the foundation-model ARNs it routes to (ap-southeast-2, ap-southeast-4)                                                                                                                                                           | runtime ARN                                                      |
+| **agent**       | `AWS::BedrockAgentCore::Runtime` (container image `{ecr}:{gitSha}` passed as a parameter); IAM role allowing `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` on the `ModelId` inference profile and its `FoundationModelId` in whichever Regions that profile routes to (ADR 0005)                                                                                                                              | runtime ARN                                                      |
 | **api** _(SAM)_ | `AWS::Serverless::HttpApi` with a Cognito JWT authoriser; one function per route group (quizzes, games, play, history), the generation worker, and the sweeper (Node.js 22, arm64, esbuild); AppSync Events API, `game` namespace, and the Lambda authoriser; EventBridge Scheduler rule running the sweeper every hour; IAM permissions for Comprehend `DetectToxicContent`, AgentCore invoke, AppSync publish, DynamoDB and SSM | API URL, Events endpoints                                        |
 | **web**         | S3 bucket (private, served through Origin Access Control); CloudFront distribution: default route to S3, `/api/*` to the HTTP API with caching disabled and the `Authorization` header forwarded; SPA fallback to `index.html`                                                                                                                                                                                                    | distribution domain                                              |
 
@@ -320,7 +320,7 @@ Each milestone lists what gets built, then **Done when**, the condition for call
 - Write `ci.yml`, which runs on every PR: install, lint, typecheck, unit tests, `cfn-lint`, and `sam validate`.
 - Create the GitHub OIDC provider and a deploy role per environment. This is a one-off bootstrap template deployed by hand.
 - Write the foundation stack and deploy it to dev.
-- **Spike A (AgentCore and Bedrock):** deploy a Strands TS "hello" agent to AgentCore through the agent stack, and invoke `au.anthropic.claude-opus-5-5` from it. This confirms CloudFormation support for `AWS::BedrockAgentCore::Runtime`, the image packaging, and the IAM model ARNs.
+- **Spike A (AgentCore and Bedrock):** deploy a Strands TS "hello" agent to AgentCore through the agent stack, and invoke the configured Bedrock model from it through the Converse API. This confirms CloudFormation support for `AWS::BedrockAgentCore::Runtime`, the image packaging, and the IAM model ARNs.
 - **Spike B (AppSync Events auth):** create an AppSync Events API in CloudFormation, with a Lambda authoriser that allows subscribing only to `/game/{id}/players`. Check that a browser subscribe works, that a publish from the browser is denied, and that an IAM publish from a Lambda is delivered.
 - **Done when:** both spikes work in dev, and any CloudFormation gaps are recorded with a workaround, for example a custom resource. If either spike changes an ADR, update the ADR.
 
