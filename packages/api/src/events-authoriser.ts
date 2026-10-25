@@ -15,8 +15,9 @@ export interface EventsAuthoriserEvent {
     accountId: string;
     requestId: string;
     operation: 'EVENT_CONNECT' | 'EVENT_SUBSCRIBE' | 'EVENT_PUBLISH';
-    channelNamespaceName: string | null;
-    channel: string | null;
+    /** Absent (not null) on EVENT_CONNECT, despite what the docs suggest. */
+    channelNamespaceName?: string | null;
+    channel?: string | null;
   };
   requestHeaders: Record<string, string>;
 }
@@ -76,8 +77,8 @@ export async function authorise(
 }
 
 /** AppSync may send channels with or without leading/trailing slashes. */
-function normaliseChannel(channel: string | null): string | null {
-  if (channel === null) return null;
+function normaliseChannel(channel: string | null | undefined): string | null {
+  if (channel === null || channel === undefined) return null;
   return `/${channel.replace(/^\/+|\/+$/g, '')}`;
 }
 

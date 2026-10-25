@@ -20,6 +20,10 @@ export class EventsClient {
     private readonly token: string,
   ) {
     socket.addEventListener('message', (m) => this.onMessage(JSON.parse(String(m.data))));
+    // Surface a closed socket to anyone waiting, rather than letting them time out.
+    socket.addEventListener('close', (e) =>
+      this.onMessage({ type: 'closed', errors: { code: e.code, reason: e.reason } }),
+    );
   }
 
   static async connect(realtimeDomain: string, httpDomain: string, token: string) {
@@ -38,7 +42,13 @@ export class EventsClient {
       });
     });
     socket.send(JSON.stringify({ type: 'connection_init' }));
-    await client.reply((m) => m.type === 'connection_ack', 'connection_ack');
+    const ack = await client.reply(
+      (m) => m.type === 'connection_ack' || m.type === 'connection_error' || m.type === 'closed',
+      'connection_ack',
+    );
+    if (ack.type !== 'connection_ack') {
+      throw new Error(`connection refused: ${JSON.stringify(ack)}`);
+    }
     return client;
   }
 

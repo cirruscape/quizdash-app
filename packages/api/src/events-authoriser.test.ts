@@ -76,6 +76,16 @@ describe('events authoriser: Players', () => {
   });
 });
 
+describe('events authoriser: AppSync request shapes', () => {
+  it('handles a connect that omits the channel field entirely, as AppSync sends it', async () => {
+    const connect = event('EVENT_CONNECT', null);
+    delete (connect.requestContext as { channel?: unknown }).channel;
+    delete (connect.requestContext as { channelNamespaceName?: unknown }).channelNamespaceName;
+    expect(await allowed(connect)).toBe(true);
+    expect(await allowed({ ...connect, authorizationToken: HOST_TOKEN })).toBe(true);
+  });
+});
+
 describe('events authoriser: Hosts', () => {
   it('lets a Host connect, and subscribe to both channels of their own Game', async () => {
     expect(await allowed(event('EVENT_CONNECT', null, HOST_TOKEN))).toBe(true);
