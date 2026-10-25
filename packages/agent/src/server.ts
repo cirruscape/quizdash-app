@@ -1,19 +1,52 @@
-// AgentCore Runtime container entry point: GET /ping for health, POST /invocations for work.
-// Placeholder until Spike A (PLAN §10, M0) wires in the Strands agent and Bedrock.
+// AgentCore Runtime HTTP contract: listen on 0.0.0.0:8080 (arm64 image),
+// GET /ping for health, POST /invocations with a JSON body.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { z } from 'zod';
+import { createAnswerer, type Answerer } from './answerer.js';
 
 const PORT = 8080;
+const MAX_BODY_BYTES = 64 * 1024;
 
-export function route(req: IncomingMessage, res: ServerResponse): void {
-  if (req.method === 'GET' && req.url === '/ping') {
-    send(res, 200, { status: 'Healthy' });
-    return;
+const InvocationRequest = z.object({ prompt: z.string().min(1).max(4000) });
+
+export function createRouter(answer: Answerer) {
+  return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (req.method === 'GET' && req.url === '/ping') {
+      send(res, 200, { status: 'Healthy' });
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/invocations') {
+      const body = await readJson(req);
+      const parsed = InvocationRequest.safeParse(body);
+      if (!parsed.success) {
+        send(res, 400, { status: 'error', error: 'INVALID_REQUEST' });
+        return;
+      }
+      try {
+        send(res, 200, { status: 'success', response: await answer(parsed.data.prompt) });
+      } catch (err) {
+        console.error('invocation failed', err);
+        send(res, 500, { status: 'error', error: 'INVOCATION_FAILED' });
+      }
+      return;
+    }
+    send(res, 404, { error: 'NOT_FOUND' });
+  };
+}
+
+async function readJson(req: IncomingMessage): Promise<unknown> {
+  let size = 0;
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > MAX_BODY_BYTES) return undefined;
+    chunks.push(chunk as Buffer);
   }
-  if (req.method === 'POST' && req.url === '/invocations') {
-    send(res, 501, { error: 'NOT_IMPLEMENTED' });
-    return;
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    return undefined;
   }
-  send(res, 404, { error: 'NOT_FOUND' });
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {
@@ -22,5 +55,11 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  createServer(route).listen(PORT, () => console.log(`agent listening on :${PORT}`));
+  const answer = createAnswerer({
+    region: process.env.AWS_REGION ?? 'ap-southeast-2',
+    modelId: process.env.MODEL_ID ?? 'au.anthropic.claude-opus-5-5',
+  });
+  createServer((req, res) => void createRouter(answer)(req, res)).listen(PORT, '0.0.0.0', () =>
+    console.log(`agent listening on 0.0.0.0:${PORT}`),
+  );
 }

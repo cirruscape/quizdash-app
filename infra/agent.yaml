@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Quiz App generation agent (PLAN §8, §9; Spike A): an AgentCore Runtime running the
+  Strands container image, allowed to call Claude Opus 5.5 through the Australian
+  Bedrock inference profile. Stack name: quizapp-{env}-agent.
+
+Parameters:
+  Env:
+    Type: String
+    AllowedValues: [dev, prod]
+  ImageTag:
+    Type: String
+    Description: Tag of the agent image in the foundation stack's ECR repository (the git SHA).
+    AllowedPattern: '[A-Za-z0-9._-]+'
+  ModelId:
+    Type: String
+    Default: au.anthropic.claude-opus-5-5
+    Description: Bedrock inference profile ID the agent calls.
+
+Resources:
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub quizapp-${Env}-agent-runtime
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: bedrock-agentcore.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*
+      Policies:
+        - PolicyName: runtime
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: EcrImage
+                Effect: Allow
+                Action: [ecr:BatchGetImage, ecr:GetDownloadUrlForLayer]
+                Resource: !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/quizapp-${Env}-agent
+              - Sid: EcrToken
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Sid: Logs
+                Effect: Allow
+                Action: [logs:CreateLogGroup, logs:DescribeLogStreams]
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*
+              - Sid: LogGroups
+                Effect: Allow
+                Action: logs:DescribeLogGroups
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*
+              - Sid: LogEvents
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*
+              - Sid: Tracing
+                Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: '*'
+              - Sid: Metrics
+                Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: bedrock-agentcore
+              - Sid: WorkloadIdentity
+                Effect: Allow
+                Action:
+                  - bedrock-agentcore:GetWorkloadAccessToken
+                  - bedrock-agentcore:GetWorkloadAccessTokenForJWT
+                Resource:
+                  - !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default
+                  - !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/quizapp_${Env}_generator-*
+              # The au. profile routes between Sydney (ap-southeast-2) and Melbourne
+              # (ap-southeast-4), so the model must be allowed in both Regions.
+              - Sid: InvokeOpusViaAuProfile
+                Effect: Allow
+                Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+                Resource:
+                  - !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${ModelId}
+                  - arn:aws:bedrock:ap-southeast-2::foundation-model/anthropic.claude-opus-5-5
+                  - arn:aws:bedrock:ap-southeast-4::foundation-model/anthropic.claude-opus-5-5
+
+  Runtime:
+    Type: AWS::BedrockAgentCore::Runtime
+    Properties:
+      AgentRuntimeName: !Sub quizapp_${Env}_generator
+      Description: Quiz App Quiz generation agent (Strands, TypeScript).
+      RoleArn: !GetAtt ExecutionRole.Arn
+      ProtocolConfiguration: HTTP
+      NetworkConfiguration:
+        NetworkMode: PUBLIC
+      AgentRuntimeArtifact:
+        ContainerConfiguration:
+          ContainerUri: !Sub
+            - '${RepositoryUri}:${ImageTag}'
+            - RepositoryUri: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-AgentRepositoryUri' }
+      EnvironmentVariables:
+        MODEL_ID: !Ref ModelId
+
+Outputs:
+  RuntimeArn:
+    Value: !GetAtt Runtime.AgentRuntimeArn
+    Export:
+      Name: !Sub quizapp-${Env}-AgentRuntimeArn
+  RuntimeId:
+    Value: !GetAtt Runtime.AgentRuntimeId

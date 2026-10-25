@@ -8,6 +8,7 @@ export default tseslint.config(
     ignores: [
       '**/dist/**',
       '**/dist-lambda/**',
+      '**/dist-bundle/**',
       '**/.tsbuild/**',
       '**/.aws-sam/**',
       '**/coverage/**',

@@ -5,3 +5,4 @@ coverage
 pnpm-lock.yaml
 infra/**/*.yaml
 dist-lambda
+dist-bundle

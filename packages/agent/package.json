@@ -5,9 +5,15 @@
   "type": "module",
   "scripts": {
     "build": "tsc -b",
-    "start": "node dist/server.js"
+    "bundle": "node bundle.mjs",
+    "start": "node dist-bundle/index.mjs"
   },
   "dependencies": {
-    "@quizapp/contracts": "workspace:*"
+    "@quizapp/contracts": "workspace:*",
+    "@strands-agents/sdk": "^1.22.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

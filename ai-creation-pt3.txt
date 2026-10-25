@@ -1,0 +1,211 @@
+BUILDING A QUIZ APP WITH CLAUDE CODE: PART 3
+============================================
+
+This continues ai-creation-pt2.txt. It covers the same Claude Code session,
+from the request that created part 2 up to this file.
+
+  Tool:   Claude Code (CLI), model Claude Opus 5.5
+  Date:   2026-10-25
+  Starts at:  commit fe6830e and the request for part 2
+  Ends at:    commit a980f5d, plus uncommitted pipeline work
+
+How to read this:
+  USER    is what the developer typed, verbatim.
+  CLAUDE  is Claude's reply, shortened where it was long.
+  [ ... ] marks an action Claude took with its tools. These summarise the
+          action; they are not the raw tool output.
+
+
+------------------------------------------------------------------------------
+1. COMMITTING PART 2
+------------------------------------------------------------------------------
+
+USER:
+commit it
+
+[Claude committed a980f5d: "Add part 2 of the AI creation session
+ write-up".]
+
+While the commit ran, the developer asked another question.
+
+USER:
+What should I do next as step towards app implementation?
+
+CLAUDE:
+My recommendation for the next step is M1, the domain rules package.
+Nothing blocks it, and every later milestone builds on it. It's pure
+TypeScript with no AWS, so it's fast to build and fully testable. It covers
+the Game state machine, scoring, ranking with ties, Nickname rules, Join
+Codes, and the edge cases (early close, late or double Answers, the
+50-Player cap). This is a good fit for test-first development.
+Things only you can do, alongside M1:
+ 1. Unblock Spike A (Docker in WSL, or build the image in GitHub Actions).
+ 2. Create the GitHub repo.
+ 3. Run the Spike B live checks, or decide to skip them.
+
+
+------------------------------------------------------------------------------
+2. AN HONEST STATUS CHECK
+------------------------------------------------------------------------------
+
+USER:
+Did M0 complete successfully?
+
+[Claude compared the work against the plan's M0 checklist and its "Done
+ when" condition.]
+
+CLAUDE:
+No, M0 isn't complete. About half of it is done.
+
+  Monorepo scaffold                  Done
+  ci.yml workflow                    Written, but it has never run
+  GitHub OIDC bootstrap stack        Template only, not deployed
+  Foundation stack deployed to dev   Template only, not deployed
+  Spike A (AgentCore and Bedrock)    Not started, blocked on Docker
+  Spike B (Events authoriser)        Code, tests and stack done; the live
+                                     checks have not been run
+
+The plan says M0 is done when both spikes work in dev. Neither has been
+confirmed working in dev yet. Spike A is the biggest remaining risk,
+because M3 depends on it.
+
+Lesson for the blog: asked a yes/no question about progress, Claude
+answered "no" plainly, and listed exactly what was and wasn't verified,
+rather than rounding "mostly done" up to "done".
+
+
+------------------------------------------------------------------------------
+3. A DEPLOYMENT PIPELINE TO FINISH M0
+------------------------------------------------------------------------------
+
+USER:
+Add a Github Actions build/deployment pipeline for completing M0
+
+[Claude checked three primary sources before writing anything:
+   - the CloudFormation reference for AWS::BedrockAgentCore::Runtime
+   - AgentCore's HTTP service contract: an arm64 container on
+     0.0.0.0:8080, POST /invocations, and GET /ping returning
+     {"status":"Healthy"}
+   - AgentCore's documented execution role and trust policy
+ It also read the Strands TypeScript SDK's README and type definitions
+ from the installed package. That confirmed the BedrockModel options, and
+ that AgentResult.toString() returns the reply text.]
+
+[Claude made a model-specific choice: it left out "temperature", because
+ Claude Opus 5.5 rejects sampling parameters, even though the Strands
+ example sets one.]
+
+[Claude wrote the Spike A agent:
+   packages/agent/src/answerer.ts
+       A Strands Agent using BedrockModel with au.anthropic.claude-opus-5-5,
+       creating a fresh Agent per request so no history leaks between calls.
+   packages/agent/src/server.ts
+       AgentCore's HTTP contract, with request validation, a body size cap,
+       and the model call injected so it can be tested without Bedrock.
+   unit tests for ping, a successful invocation, bad bodies, model failure
+       (500), and unknown routes ]
+
+[A packaging decision: instead of "pnpm deploy" inside Docker, Claude
+ bundled the agent with esbuild, the same approach as the Lambdas. The
+ Dockerfile just copies one file, so building the arm64 image under
+ emulation in CI stays fast. Docker isn't needed locally either.]
+
+[The first bundle crashed at startup: Strands imports
+ @modelcontextprotocol/client at load time, but Claude had marked it
+ external. Claude then checked which of Strands' optional peer packages
+ were actually installed, bundled those, and left out only the missing
+ ones. It ran the bundle on its own with no node_modules: /ping answered
+ Healthy, and a bad request got a 400.]
+
+[Claude wrote infra/agent.yaml: an execution role following the AWS
+ documentation, with Bedrock access scoped to the au. profile and Opus 5.5
+ in Sydney and Melbourne (the profile routes between the two), plus the
+ AgentCore Runtime pointed at the ECR image by commit SHA.]
+
+[Claude extended the bootstrap deploy role. The pipeline can now invoke
+ the agent for a smoke test, and read the artifacts bucket.]
+
+[Claude made ci.yml reusable, so the deploy workflow calls it instead of
+ both running on every push. It scoped CI's concurrency group by calling
+ workflow, so the two can't cancel each other.]
+
+[Claude wrote .github/workflows/deploy.yml. On every push to main:
+   CI -> foundation stack -> agent image (arm64, pushed to ECR, skipped if
+   this commit's image already exists) -> agent stack -> smoke test.
+ The smoke test invokes the agent and expects "Canberra" in the reply.
+ The Spike B stack deploys in parallel. Every job authenticates through
+ GitHub OIDC, and CloudFormation creates resources through a separate
+ execution role.]
+
+[Claude looked up current versions of every GitHub Action used, and the
+ exact CLI syntax for invoking an AgentCore runtime.]
+
+[Claude ran cfn-lint on all templates and actionlint on both workflows,
+ plus format, lint, typecheck and the 30 tests. One lint failure: ESLint
+ was scanning the new agent bundle. Claude added it to the ignores.]
+
+[Claude rewrote the README's deploy section: what the pipeline does, the
+ one-time setup (bootstrap stack, the "dev" GitHub Environment and its
+ three variables, enabling Opus 5.5 in Bedrock), and manual deploy
+ commands for debugging.]
+
+CLAUDE:
+The deploy pipeline is written and passes every check I can run locally.
+It hasn't run on GitHub yet, because the repo, the GitHub Environment and
+the bootstrap stack don't exist. Nothing new has been deployed to AWS, and
+nothing is committed.
+One-time setup only you can do:
+ 1. Deploy the bootstrap stack with your GitHub owner/repo.
+ 2. Create a "dev" GitHub Environment with three variables.
+ 3. Enable Claude Opus 5.5 in Bedrock for the quizdash account.
+ 4. Push to the new repo.
+Two caveats:
+ - The CloudFormation template for the AgentCore Runtime passes cfn-lint,
+   but hasn't been deployed yet. The first pipeline run may surface
+   something to fix.
+ - Spike B's live checks are still manual.
+
+
+------------------------------------------------------------------------------
+4. THIS FILE
+------------------------------------------------------------------------------
+
+USER:
+Now write a file ./ai-creation-pt3.txt which describes steps done since
+./ai-creation-pt2.txt
+
+[Claude wrote this file.]
+
+
+------------------------------------------------------------------------------
+WHERE THINGS STAND
+------------------------------------------------------------------------------
+
+Commits so far:
+  24fd2a5  Scaffold monorepo, domain docs and foundation infrastructure
+  3a9be57  Add Spike B: AppSync Events Player authoriser, and MIT license
+  fe6830e  Use the quizdash account for dev
+  a980f5d  Add part 2 of the AI creation session write-up
+
+Uncommitted: the deploy pipeline, the Spike A agent, infra/agent.yaml, the
+bootstrap role changes, README updates, and this file.
+
+M0 status:
+  - The pipeline is ready, but needs the GitHub repo, the bootstrap stack,
+    the GitHub Environment, and Opus 5.5 enabled in Bedrock.
+  - Spike A has code and infrastructure, and is verified up to running the
+    bundle locally. The AgentCore deploy and the model call are still
+    unproven.
+  - The Spike B stack is deployed, but the live checks have not been run.
+
+Observations worth blogging about:
+  - Claude read the installed library's type definitions instead of
+    guessing an API, and knew a model-specific rule (no temperature on Opus
+    5.5) that the library's own example would have broken.
+  - When a bundle failed at runtime, Claude found the root cause (which
+    optional packages are actually installed) instead of just patching the
+    one module that failed.
+  - Claude built verification into the pipeline itself: the smoke test
+    proves the agent and model path end to end on every deploy.
+  - Claude kept being explicit about what was verified locally and what
+    only a real deployment can prove.

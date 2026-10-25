@@ -34,13 +34,23 @@ pnpm --filter @quizapp/web dev
 
 To lint the templates, you also need cfn-lint (`pip install cfn-lint`). Then run `pnpm lint:infra`.
 
-## Deploying (manual, until the pipeline exists in M5)
+## Deploying
 
 The **dev** environment is AWS account `587736032611`, reached through the `quizdash` CLI profile. That profile has no default region, so every command passes `--region ap-southeast-2`. The prod account is not yet decided.
 
-### 1. Bootstrap (once per environment, by hand)
+Every push to `main` runs `.github/workflows/deploy.yml`, which deploys to dev:
 
-Deploy the bootstrap stack with admin credentials.
+1. **CI**: format, lint, typecheck, tests, and the web build.
+2. **foundation**: the `quizapp-dev-foundation` stack.
+3. **agent-image**: bundles the agent and pushes an arm64 image to ECR, tagged with the commit SHA.
+4. **agent**: the `quizapp-dev-agent` stack, then a smoke test that invokes the agent and expects "Canberra" in the reply (Spike A).
+5. **spike-events**: the `quizapp-dev-spike-events` stack (Spike B). This runs in parallel with steps 3 and 4.
+
+You can also run it from the Actions tab (**Deploy → Run workflow**).
+
+### One-time setup
+
+**1. Bootstrap the account (by hand, with admin credentials):**
 
 ```sh
 aws cloudformation deploy --profile quizdash --region ap-southeast-2 \
@@ -50,31 +60,44 @@ aws cloudformation deploy --profile quizdash --region ap-southeast-2 \
   --parameter-overrides Env=dev GitHubRepository=<owner>/<repo>
 ```
 
-Then set the stack's `DeployRoleArn` output as the `AWS_DEPLOY_ROLE_ARN` variable on the `dev` GitHub Environment.
+The GitHub OIDC provider exists only once per AWS account. If the account already has one, add `CreateOidcProvider=false ExistingOidcProviderArn=<arn>`.
 
-The GitHub OIDC provider exists only once per AWS account. If you bootstrap a second environment in an account that already has one, pass `CreateOidcProvider=false ExistingOidcProviderArn=<arn>`.
+**2. Create a GitHub Environment named `dev`** (Settings → Environments). Add these variables, copied from the bootstrap stack's outputs:
 
-### 2. Foundation
+| Variable                 | Bootstrap output      |
+| ------------------------ | --------------------- |
+| `AWS_DEPLOY_ROLE_ARN`    | `DeployRoleArn`       |
+| `CFN_EXECUTION_ROLE_ARN` | `CfnExecutionRoleArn` |
+| `ARTIFACTS_BUCKET`       | `ArtifactsBucketName` |
+
+The deploy role trusts only jobs that run in this Environment.
+
+**3. Enable Claude Opus 5.5 in Amazon Bedrock** for the account in ap-southeast-2, if you haven't already. The Spike A smoke test calls it through the `au.anthropic.claude-opus-5-5` inference profile, and fails with an access error until the model is enabled.
+
+**4. Existing Spike B stack:** `quizapp-dev-spike-events` was first deployed by hand. The pipeline takes it over: later updates run through the CloudFormation execution role.
+
+### Manual deploys
+
+These are useful when debugging a stack outside the pipeline.
 
 ```sh
+# Foundation
 aws cloudformation deploy --profile quizdash --region ap-southeast-2 \
   --stack-name quizapp-dev-foundation \
   --template-file infra/foundation.yaml \
   --capabilities CAPABILITY_AUTO_EXPAND \
-  --role-arn <CfnExecutionRoleArn from bootstrap> \
   --parameter-overrides Env=dev
-```
 
-### Spike B (disposable)
-
-```sh
+# Spike B (disposable)
 pnpm --filter @quizapp/api bundle
 sam deploy --profile quizdash --region ap-southeast-2 \
   --template-file infra/spikes/events-auth.yaml \
   --stack-name quizapp-dev-spike-events \
   --resolve-s3 --capabilities CAPABILITY_IAM
 
-# Tear down when finished
+# Tear down Spike B when finished
 aws cloudformation delete-stack --profile quizdash --region ap-southeast-2 \
   --stack-name quizapp-dev-spike-events
 ```
+
+The agent stack needs an image in ECR, so deploy it through the pipeline. Building the image locally requires Docker with arm64 support.

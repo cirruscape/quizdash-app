@@ -110,7 +110,7 @@ Resources:
                 Resource: !GetAtt CfnExecutionRole.Arn
               - Sid: Artifacts
                 Effect: Allow
-                Action: [s3:PutObject, s3:GetObject, s3:ListBucket]
+                Action: [s3:PutObject, s3:GetObject, s3:ListBucket, s3:GetBucketLocation]
                 Resource:
                   - !GetAtt ArtifactsBucket.Arn
                   - !Sub ${ArtifactsBucket.Arn}/*
@@ -135,18 +135,27 @@ Resources:
                 Resource:
                   - !Sub arn:aws:s3:::quizapp-${Env}-web-*
                   - !Sub arn:aws:s3:::quizapp-${Env}-web-*/*
+              - Sid: SmokeTestAgent
+                Effect: Allow
+                Action: bedrock-agentcore:InvokeAgentRuntime
+                Resource:
+                  - !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/quizapp_${Env}_*
+                  - !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/quizapp_${Env}_*/runtime-endpoint/*
               - Sid: CloudFrontInvalidate
                 Effect: Allow
                 Action: cloudfront:CreateInvalidation
                 Resource: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/*
 
+# Set each of the first three outputs as a variable on the matching GitHub Environment.
 Outputs:
   DeployRoleArn:
-    Description: Set as the AWS_DEPLOY_ROLE_ARN variable on the matching GitHub Environment.
+    Description: GitHub variable AWS_DEPLOY_ROLE_ARN
     Value: !GetAtt DeployRole.Arn
   CfnExecutionRoleArn:
+    Description: GitHub variable CFN_EXECUTION_ROLE_ARN
     Value: !GetAtt CfnExecutionRole.Arn
   ArtifactsBucketName:
+    Description: GitHub variable ARTIFACTS_BUCKET
     Value: !Ref ArtifactsBucket
   OidcProviderArn:
     Condition: CreateProvider

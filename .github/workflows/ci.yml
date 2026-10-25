@@ -1,15 +1,16 @@
 name: CI
 
+# Runs on pull requests, and is called by deploy.yml for pushes to main.
 on:
   pull_request:
-  push:
-    branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # github.workflow is the caller's name when called from deploy.yml, so the groups never collide.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

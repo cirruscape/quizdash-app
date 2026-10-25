@@ -1,0 +1,195 @@
+name: Deploy
+
+# Deploys the M0 stacks to dev on every push to main (PLAN §9, §10):
+#   CI -> foundation -> agent image -> agent stack + Spike A smoke test
+#                    -> Spike B stack
+# Prod deployment (tags, approvals) arrives in M5.
+#
+# Requires a GitHub Environment named "dev" with these variables, taken from the outputs of
+# the quizapp-dev-bootstrap stack (see README):
+#   AWS_DEPLOY_ROLE_ARN, CFN_EXECUTION_ROLE_ARN, ARTIFACTS_BUCKET
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-southeast-2
+  APP_ENV: dev
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  foundation:
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy foundation stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name "quizapp-${APP_ENV}-foundation" \
+            --template-file infra/foundation.yaml \
+            --capabilities CAPABILITY_AUTO_EXPAND \
+            --role-arn "${{ vars.CFN_EXECUTION_ROLE_ARN }}" \
+            --parameter-overrides Env="${APP_ENV}" \
+            --no-fail-on-empty-changeset
+
+  agent-image:
+    needs: foundation
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+
+      - name: Bundle agent
+        run: pnpm --filter @quizapp/agent bundle
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Check whether this commit's image already exists
+        id: exists
+        run: |
+          # Tags are immutable, so a re-run of the same commit must not push again.
+          if aws ecr describe-images --repository-name "quizapp-${APP_ENV}-agent" \
+               --image-ids imageTag="${GITHUB_SHA}" >/dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # AgentCore requires arm64. The image only copies the pre-built bundle, so building
+      # it under QEMU on an x86 runner is quick.
+      - if: steps.exists.outputs.found == 'false'
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - if: steps.exists.outputs.found == 'false'
+        uses: docker/setup-buildx-action@v4
+
+      - if: steps.exists.outputs.found == 'false'
+        uses: docker/build-push-action@v7
+        with:
+          context: packages/agent
+          platforms: linux/arm64
+          provenance: false
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/quizapp-${{ env.APP_ENV }}-agent:${{ github.sha }}
+
+  agent:
+    needs: agent-image
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy agent stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name "quizapp-${APP_ENV}-agent" \
+            --template-file infra/agent.yaml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --role-arn "${{ vars.CFN_EXECUTION_ROLE_ARN }}" \
+            --parameter-overrides Env="${APP_ENV}" ImageTag="${GITHUB_SHA}" \
+            --no-fail-on-empty-changeset
+
+      - name: Smoke test (Spike A)
+        run: |
+          ARN=$(aws cloudformation describe-stacks --stack-name "quizapp-${APP_ENV}-agent" \
+            --query "Stacks[0].Outputs[?OutputKey=='RuntimeArn'].OutputValue" --output text)
+          echo '{"prompt":"In one word, what is the capital city of Australia?"}' > payload.json
+          # Session IDs must be at least 33 characters.
+          aws bedrock-agentcore invoke-agent-runtime \
+            --agent-runtime-arn "$ARN" \
+            --runtime-session-id "ci-smoke-$(cat /proc/sys/kernel/random/uuid)" \
+            --content-type application/json \
+            --payload fileb://payload.json \
+            response.json
+          cat response.json; echo
+          jq -e '.status == "success" and (.response | test("canberra"; "i"))' response.json
+
+  spike-events:
+    needs: foundation
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+
+      - name: Bundle Lambdas
+        run: pnpm --filter @quizapp/api bundle
+
+      - uses: aws-actions/setup-sam@v3
+        with:
+          use-installer: true
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy Spike B stack
+        run: |
+          sam deploy \
+            --template-file infra/spikes/events-auth.yaml \
+            --stack-name "quizapp-${APP_ENV}-spike-events" \
+            --s3-bucket "${{ vars.ARTIFACTS_BUCKET }}" \
+            --s3-prefix spike-events \
+            --role-arn "${{ vars.CFN_EXECUTION_ROLE_ARN }}" \
+            --capabilities CAPABILITY_IAM \
+            --region "${AWS_REGION}" \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset
