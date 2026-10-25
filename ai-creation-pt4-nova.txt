@@ -1,0 +1,345 @@
+BUILDING A QUIZ APP WITH CLAUDE CODE: PART 4 (OIDC, MODEL ACCESS, NOVA)
+=======================================================================
+
+This continues ai-creation-pt3.txt. It covers the same Claude Code session,
+from the request that created part 3 up to this file.
+
+  Tool:   Claude Code (CLI), model Claude Opus 5.5
+  Dates:  2026-10-25 to 2026-10-26
+  Starts at:  commit a980f5d and the request for part 3
+  Ends at:    the commit that adds this file (after 1e8ff66)
+
+How to read this:
+  USER    is what the developer typed, verbatim.
+  CLAUDE  is Claude's reply, shortened where it was long.
+  [ ... ] marks an action Claude took with its tools. These summarise the
+          action; they are not the raw tool output.
+
+
+------------------------------------------------------------------------------
+1. COMMITTING THE PIPELINE
+------------------------------------------------------------------------------
+
+USER:
+yes
+
+[Claude committed c316cb8: "Add dev deploy pipeline and Spike A agent",
+ which included part 3 of this write-up.]
+
+
+------------------------------------------------------------------------------
+2. BOOTSTRAPPING: CLAUDE IS STOPPED AT A PERMISSION BOUNDARY
+------------------------------------------------------------------------------
+
+USER:
+The github repo is: cirruscape/quizdash-app
+
+[Claude checked the quizdash account first, read-only. There was no GitHub
+ OIDC provider yet, and none of the bootstrap stack's role or bucket names
+ were taken, so the template's defaults were right as they stood.]
+[Claude tried to deploy the bootstrap stack. Claude Code's permission
+ system blocked it, because the stack creates IAM roles and an OIDC trust
+ (including an AdministratorAccess execution role for CloudFormation).]
+[Claude did not retry or work around the block. It found that the git
+ remote was already configured, and pushed nothing.]
+
+CLAUDE:
+The bootstrap stack isn't deployed: the permission system blocked my
+deploy, so that step is yours to run. The step is gated because the stack
+grants access. [Claude gave the exact command for the developer to run
+with the "!" prefix, how to read the outputs, and the GitHub Environment
+setup that follows.]
+
+Lesson for the blog: the guardrail worked as intended. A change that
+grants cloud access needed the developer's own hands. Claude prepared
+everything, explained exactly what the step does, and handed the action
+over instead of looking for another route to it.
+
+
+------------------------------------------------------------------------------
+3. DEBUGGING GITHUB OIDC: "NOT AUTHORIZED TO PERFORM
+   sts:AssumeRoleWithWebIdentity"
+------------------------------------------------------------------------------
+
+USER:
+I get the following error when the github actions pipeline runs; after the
+above variables have been added: Retry AssumeRole: attempt 4 of 12 failed:
+Could not assume role with OIDC: Not authorized to perform
+sts:AssumeRoleWithWebIdentity. Retrying after 14ms
+
+[Claude checked the AWS side first, read-only: the deployed stack
+ parameters, the OIDC provider and the role's trust policy. All of them
+ were as intended. The policy expected the subject
+   repo:cirruscape/quizdash-app:environment:dev ]
+[The gh CLI wasn't installed, but the repo is public, so Claude used
+ GitHub's public REST API. The run's job list showed CI passing, then
+ failure at the first AWS step. The repo's OIDC settings showed
+   "use_immutable_subject": true
+   "sub_claim_prefix": "repo:cirruscape@235645298/quizdash-app@1432826993"
+ New GitHub repos (from July 2026) use immutable subjects, which embed the
+ owner and repo IDs, so the token's subject never matched the trust
+ policy.]
+
+[Claude kept the immutable format rather than switching the repo back,
+ because it is more secure: a deleted and re-created repo with the same
+ name can't assume the role. It added an optional GitHubSubjectPrefix
+ parameter to the bootstrap template, ran cfn-lint on it, tested the
+ parameter pattern, and updated the README. It gave the developer the
+ redeploy command to run.]
+
+USER:
+Still faining; error is: [...] Retry AssumeRole: reached max retries (12);
+giving up. Error: Could not assume role with OIDC: Not authorized to perform
+sts:AssumeRoleWithWebIdentity
+
+[Claude confirmed the new trust policy was live. It tried CloudTrail to see
+ the rejected token, but the deploying IAM user can't read CloudTrail.]
+[It checked GitHub's documentation. The docs describe the immutable format
+ for branches, but not for environments.]
+[It compared timestamps. The re-run started 52 seconds after the trust
+ policy update, which looked late enough.]
+[Rather than guess another subject format, Claude added a temporary
+ workflow step. The step requests the OIDC token and prints only its
+ claims (sub, aud, environment, repository IDs), never the token itself.
+ Claude first tested the decoding on a sample token. Its first version
+ used base64 -d, which can truncate unpadded base64url, so it switched to
+ Python.]
+
+USER:
+push it
+
+[The push failed: this shell has no GitHub credentials. Claude said so
+ plainly and gave the developer the command to push from their own
+ session.]
+
+[Outcome: after the developer pushed, the pipeline got past the AWS
+ sign-in. Claude later confirmed the trust policy hadn't changed since the
+ immutable-prefix fix. The earlier failure was therefore most likely IAM
+ propagation delay on a re-run that started soon after the update.]
+
+
+------------------------------------------------------------------------------
+4. THE FIRST REAL DEPLOY, AND A 500 FROM THE AGENT
+------------------------------------------------------------------------------
+
+USER:
+The github actions deployment pipeline has now worked, but Smoke test
+(Spike A) filed with error: [...] RuntimeClientError [...] Received error
+(500) from runtime. Please check your CloudWatch logs for more information.
+
+[This meant the whole M0 stack had deployed through the pipeline, and the
+ AgentCore runtime had been created from the CloudFormation template.]
+[Claude reasoned that a 500 meant the container was running and
+ /invocations had been reached, but the model call had thrown. It found the
+ runtime's log group and read the logs.]
+
+  invocation failed ModelError: anthropic.claude-opus-5-5 is not available
+  for this account.
+
+[So the container, AgentCore routing and IAM were all working. Bedrock
+ itself was refusing the model for this account. Claude tried to query the
+ account's model-access status, but the deploying user lacks
+ bedrock:GetFoundationModelAvailability. Claude reported this rather than
+ guessing.]
+
+USER:
+My account currently lacks Anthropic permissions; I will need to request
+this
+
+
+------------------------------------------------------------------------------
+5. SWITCHING TO AMAZON NOVA 2, CONVERSE-ONLY
+------------------------------------------------------------------------------
+
+USER:
+To resolve the anthropic model access temporarily, amend the app to instead
+use Amazon Nova 2 for now. Ensure that models are always called via
+Bedrock Converse API for easy swapping later
+
+[Claude researched before changing anything:
+   - AWS's Nova 2 Lite model card: the ID is amazon.nova-2-lite-v1:0. From
+     ap-southeast-2 it is reachable only through the GLOBAL profile,
+     global.amazon.nova-2-lite-v1:0; there is no au. or apac. profile. It
+     supports Converse but not Bedrock's native structured outputs.
+   - AWS's IAM requirements for global profiles: a three-part policy that
+     includes a region-less foundation-model ARN.
+   - Strands' compiled source: BedrockModel calls only ConverseCommand or
+     ConverseStreamCommand, never InvokeModel. ]
+
+[Claude wrote packages/agent/src/model.ts, the single place a model is
+ constructed. The model ID comes from MODEL_ID, and the agent refuses to
+ start without it rather than quietly falling back to a default model.]
+
+[Claude added ESLint rules that reject InvokeModel commands, Strands'
+ non-Bedrock model providers, and constructing a BedrockModel outside
+ model.ts. It proved the rules work with a throwaway file containing all
+ three: each was flagged, and the real code linted clean.]
+
+[Claude made infra/agent.yaml's IAM policy driven by ModelId and
+ FoundationModelId parameters, defaulting to Nova 2 Lite. It works for both
+ geographic profiles (like au.) and global profiles, so switching back to
+ Opus 5.5 is a parameter change. (Section 8 shows why using parameters
+ turned out to be a mistake.)]
+
+[Claude wrote ADR 0005, "Models are called only through the Bedrock
+ Converse API, and chosen by configuration". It records the trade-offs:
+ only portable settings, no provider-specific structured outputs, and
+ global routing while on Nova. Claude also updated ADR 0001, the PRD, the
+ plan and the README.]
+
+While Claude was working, the developer refined the request.
+
+USER:
+Use conversestream to still support streaming
+
+[Claude switched the model to stream: true, so calls go out as
+ ConverseStreamCommand. It added the matching IAM permission,
+ bedrock:InvokeModelWithResponseStream, and updated ADR 0005 and the plan
+ to match.]
+[Claude ran every check: cfn-lint, format, lint, typecheck, and 33 tests.
+ It rebuilt the agent bundle and ran it on its own: it started and
+ answered /ping, and without MODEL_ID it refused to start, as designed.]
+[Claude saved a memory recording that Nova is a stopgap and Opus 5.5 is
+ the intended model, so future sessions don't treat Nova as the plan.]
+
+CLAUDE:
+The agent now uses Amazon Nova 2 Lite, and every model call goes through
+ConverseStream. To switch back to Opus 5.5: set the two defaults to
+au.anthropic.claude-opus-5-5 and anthropic.claude-opus-5-5, then push. No
+code change is needed.
+For later (M3): Nova 2 Lite doesn't support Bedrock's native structured
+outputs. ADR 0005 records that generated Quizzes must get their JSON
+through Converse tool use instead, which works on both Nova and Claude.
+There's an untracked home.html in the repo root that I didn't create.
+I'll leave it out of the commit unless you say otherwise.
+
+
+------------------------------------------------------------------------------
+6. COMMIT
+------------------------------------------------------------------------------
+
+USER:
+commit it and remove the diagnostic step
+
+[Claude removed the temporary OIDC diagnostic from deploy.yml, ran
+ actionlint, and committed 1e8ff66: "Switch the agent to Amazon Nova 2 Lite
+ via Bedrock ConverseStream". It staged files explicitly, so the unrelated
+ home.html stayed out of the commit.]
+
+
+------------------------------------------------------------------------------
+7. THIS FILE
+------------------------------------------------------------------------------
+
+USER:
+Now write a file ./ai-creation-pt4-nova.txt which describes steps done
+since ./ai-creation-pt3.txt
+
+[Claude wrote this file.]
+
+
+------------------------------------------------------------------------------
+8. THE NOVA SMOKE TEST FAILS, AND CLAUDE FINDS ITS OWN BUG
+------------------------------------------------------------------------------
+
+USER:
+Smoke test A failed again, with error: aws: [ERROR]: An error occurred
+(RuntimeClientError) when calling the InvokeAgentRuntime operation:
+Received error (500) from runtime. Please check your CloudWatch logs for
+more information.
+
+[Claude read the agent's CloudWatch logs again. The newest failure was
+ surprising: the agent was still calling Claude Opus 5.5, not Nova.]
+
+  not authorized to perform: bedrock:InvokeModelWithResponseStream on
+  resource: ...foundation-model/anthropic.claude-opus-5-5
+
+[Claude suspected its own design. "aws cloudformation deploy" keeps a
+ stack parameter's previous value unless the command overrides it, and the
+ pipeline only passes Env and ImageTag. It read the deployed stack's
+ parameters, read-only, and confirmed the split:
+   ModelId            = au.anthropic.claude-opus-5-5   (kept from the
+                                                        first deploy)
+   FoundationModelId  = amazon.nova-2-lite-v1:0        (new, so it took
+                                                        its default)
+ So the agent asked for Opus, while IAM allowed only Nova.]
+
+CLAUDE:
+Confirmed. A parameter default only applies the first time a stack is
+created. Changing it later never reaches a stack that already exists. So
+"change the default and push" was wrong advice on my part. The model swap
+I documented wouldn't actually have worked.
+
+[Claude moved the model out of stack parameters and into a CloudFormation
+ Mappings table in infra/agent.yaml, with one row per environment (dev and
+ prod, both Nova 2 Lite for now). The IAM policy and MODEL_ID both read
+ from it. Editing the table changes the template itself, so every deploy
+ applies it. It also lets dev and prod use different models.]
+[Claude checked the change with cfn-lint, and with CloudFormation's
+ read-only validate-template, which confirmed the only parameters left
+ are Env and ImageTag.]
+[Claude corrected the README, ADR 0005 (which now records this incident as
+ the reason for the design), the plan, and its own memory note. The new
+ instructions warn never to put the model back into stack parameters.]
+
+USER:
+ALso update ai-creation-pt4-nova.txt to reflect this change if in scope,
+then commit
+
+[Claude added this section, updated the summary below, and committed.]
+
+Lesson for the blog: Claude's first Nova design passed every local check
+and still failed in production, because of how CloudFormation treats
+parameters on update. Claude traced the failure to its own earlier
+decision, said so plainly, fixed the root cause rather than patching the
+pipeline, and corrected the documentation that had repeated the mistake.
+
+
+------------------------------------------------------------------------------
+WHERE THINGS STAND
+------------------------------------------------------------------------------
+
+Commits added in this part:
+  c316cb8  Add dev deploy pipeline and Spike A agent
+  159a5dc  Support GitHub immutable OIDC subjects; add temporary claim
+           diagnostic
+  1e8ff66  Switch the agent to Amazon Nova 2 Lite via Bedrock
+           ConverseStream
+  (next)   Move the model into a per-environment mapping; add this file
+
+Proven in dev (quizdash account, ap-southeast-2), through the pipeline:
+  - GitHub OIDC sign-in to AWS, with immutable subjects
+  - the foundation stack
+  - the arm64 agent image built and pushed to ECR
+  - the AgentCore Runtime created by CloudFormation
+  - the container starting on AgentCore and receiving invocations
+  - the Spike B stack
+
+Still open:
+  - Pushing the mapping fix. Its smoke test will be the first real Nova 2
+    Lite call, end to end.
+  - Anthropic model access for the account (the developer is requesting
+    it). After that, switching back to Opus 5.5 means editing the Models
+    mapping in infra/agent.yaml.
+  - Spike B's live checks.
+  - The prod account, which is undecided.
+
+Observations worth blogging about:
+  - Claude debugged a cloud auth failure from both ends, the AWS trust
+    policy and GitHub's OIDC settings, and found a recent GitHub change
+    (immutable subjects) that a stale mental model would have missed.
+  - When documentation ran out, Claude chose to make the system report the
+    real value (a claims-only diagnostic) rather than guess.
+  - Claude read logs before theorising. One CloudWatch read turned a vague
+    "500 from runtime" into an exact cause: model access.
+  - The model swap was designed for the swap back. "Use Nova for now" was
+    implemented as "the model is configuration", enforced by a lint rule
+    and recorded in an ADR.
+  - When the developer redirected mid-task (ConverseStream), Claude folded
+    the change in and updated the IAM permissions and docs to match.
+  - When its own design caused a failure (stale stack parameters), Claude
+    said so, confirmed it from the deployed stack, and fixed the design
+    rather than working around it in the pipeline.
+  - Claude was explicit about what it couldn't verify: CloudTrail and model
+    availability were outside its permissions, and pushing needed the
+    developer's credentials.

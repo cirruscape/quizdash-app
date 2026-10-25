@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   Quiz App generation agent (PLAN §8, §9; Spike A): an AgentCore Runtime running the
-  Strands container image, allowed to call one Bedrock model (ModelId) through the
+  Strands container image, allowed to call one Bedrock model (see Mappings) through the
   Converse API. Stack name: quizapp-{env}-agent.
 
 Parameters:
@@ -12,18 +12,23 @@ Parameters:
     Type: String
     Description: Tag of the agent image in the foundation stack's ECR repository (the git SHA).
     AllowedPattern: '[A-Za-z0-9._-]+'
-  # The model is configuration (ADR 0005). Swap both parameters together, for example
-  # back to au.anthropic.claude-opus-5-5 / anthropic.claude-opus-5-5 once Anthropic access is granted.
-  ModelId:
-    Type: String
-    Default: global.amazon.nova-2-lite-v1:0
-    Description: Bedrock inference profile ID the agent calls (geographic or global profile).
-    AllowedPattern: '[a-z]+\.[A-Za-z0-9.:-]+'
-  FoundationModelId:
-    Type: String
-    Default: amazon.nova-2-lite-v1:0
-    Description: The foundation model behind ModelId (ModelId without its profile prefix).
-    AllowedPattern: '[A-Za-z0-9.:-]+'
+
+# The model is configuration (ADR 0005), and lives here rather than in Parameters on purpose:
+# `aws cloudformation deploy` reuses a stack's previous parameter values, so changing a
+# parameter's default never reaches an existing stack. Editing this table changes the template,
+# so every deploy applies it. To swap a model, change both values for the environment and push.
+#   ModelId:           the Bedrock inference profile the agent calls (geographic or global)
+#   FoundationModelId: the model behind it (ModelId without its profile prefix)
+# Intended once the account has Anthropic access:
+#   ModelId: au.anthropic.claude-opus-5-5, FoundationModelId: anthropic.claude-opus-5-5
+Mappings:
+  Models:
+    dev:
+      ModelId: global.amazon.nova-2-lite-v1:0
+      FoundationModelId: amazon.nova-2-lite-v1:0
+    prod:
+      ModelId: global.amazon.nova-2-lite-v1:0
+      FoundationModelId: amazon.nova-2-lite-v1:0
 
 Resources:
   ExecutionRole:
@@ -97,16 +102,24 @@ Resources:
               - Sid: InvokeModelViaProfile
                 Effect: Allow
                 Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
-                Resource: !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${ModelId}
+                Resource: !Sub
+                  - arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${ModelId}
+                  - ModelId: !FindInMap [Models, !Ref Env, ModelId]
               - Sid: InvokeFoundationModelThroughProfile
                 Effect: Allow
                 Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
                 Resource:
-                  - !Sub arn:aws:bedrock:*::foundation-model/${FoundationModelId}
-                  - !Sub arn:aws:bedrock:::foundation-model/${FoundationModelId}
+                  - !Sub
+                    - arn:aws:bedrock:*::foundation-model/${FoundationModelId}
+                    - FoundationModelId: !FindInMap [Models, !Ref Env, FoundationModelId]
+                  - !Sub
+                    - arn:aws:bedrock:::foundation-model/${FoundationModelId}
+                    - FoundationModelId: !FindInMap [Models, !Ref Env, FoundationModelId]
                 Condition:
                   StringEquals:
-                    bedrock:InferenceProfileArn: !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${ModelId}
+                    bedrock:InferenceProfileArn: !Sub
+                      - arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${ModelId}
+                      - ModelId: !FindInMap [Models, !Ref Env, ModelId]
 
   Runtime:
     Type: AWS::BedrockAgentCore::Runtime
@@ -123,7 +136,7 @@ Resources:
             - '${RepositoryUri}:${ImageTag}'
             - RepositoryUri: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-AgentRepositoryUri' }
       EnvironmentVariables:
-        MODEL_ID: !Ref ModelId
+        MODEL_ID: !FindInMap [Models, !Ref Env, ModelId]
 
 Outputs:
   RuntimeArn:

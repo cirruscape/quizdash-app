@@ -75,7 +75,7 @@ The GitHub OIDC provider exists only once per AWS account. If the account alread
 
 The deploy role trusts only jobs that run in this Environment.
 
-**3. Bedrock model access.** The agent currently uses **Amazon Nova 2 Lite**, through the global inference profile `global.amazon.nova-2-lite-v1:0`, because the account doesn't have Anthropic access yet. The intended model is Claude Opus 5.5 (`au.anthropic.claude-opus-5-5`). To switch, change the `ModelId` and `FoundationModelId` defaults in `infra/agent.yaml` and push. No code change is needed (ADR 0005).
+**3. Bedrock model access.** The agent currently uses **Amazon Nova 2 Lite**, through the global inference profile `global.amazon.nova-2-lite-v1:0`, because the account doesn't have Anthropic access yet. The intended model is Claude Opus 5.5 (`au.anthropic.claude-opus-5-5`). To switch, edit the environment's `ModelId` and `FoundationModelId` in the `Models` mapping at the top of `infra/agent.yaml`, then push. No code change is needed (ADR 0005). Don't make the model a stack parameter: `aws cloudformation deploy` keeps a parameter's previous value, so a changed default never reaches an existing stack.
 
 **4. Existing Spike B stack:** `quizapp-dev-spike-events` was first deployed by hand. The pipeline takes it over: later updates run through the CloudFormation execution role.
 
