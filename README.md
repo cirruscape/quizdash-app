@@ -36,12 +36,14 @@ To lint the templates, you also need cfn-lint (`pip install cfn-lint`). Then run
 
 ## Deploying (manual, until the pipeline exists in M5)
 
+The **dev** environment is AWS account `587736032611`, reached through the `quizdash` CLI profile. That profile has no default region, so every command passes `--region ap-southeast-2`. The prod account is not yet decided.
+
 ### 1. Bootstrap (once per environment, by hand)
 
 Deploy the bootstrap stack with admin credentials.
 
 ```sh
-aws cloudformation deploy --region ap-southeast-2 \
+aws cloudformation deploy --profile quizdash --region ap-southeast-2 \
   --stack-name quizapp-dev-bootstrap \
   --template-file infra/bootstrap/github-oidc.yaml \
   --capabilities CAPABILITY_NAMED_IAM \
@@ -50,15 +52,29 @@ aws cloudformation deploy --region ap-southeast-2 \
 
 Then set the stack's `DeployRoleArn` output as the `AWS_DEPLOY_ROLE_ARN` variable on the `dev` GitHub Environment.
 
-When bootstrapping the second environment, the account's GitHub OIDC provider already exists. Pass `CreateOidcProvider=false ExistingOidcProviderArn=<arn>`.
+The GitHub OIDC provider exists only once per AWS account. If you bootstrap a second environment in an account that already has one, pass `CreateOidcProvider=false ExistingOidcProviderArn=<arn>`.
 
 ### 2. Foundation
 
 ```sh
-aws cloudformation deploy --region ap-southeast-2 \
+aws cloudformation deploy --profile quizdash --region ap-southeast-2 \
   --stack-name quizapp-dev-foundation \
   --template-file infra/foundation.yaml \
   --capabilities CAPABILITY_AUTO_EXPAND \
   --role-arn <CfnExecutionRoleArn from bootstrap> \
   --parameter-overrides Env=dev
+```
+
+### Spike B (disposable)
+
+```sh
+pnpm --filter @quizapp/api bundle
+sam deploy --profile quizdash --region ap-southeast-2 \
+  --template-file infra/spikes/events-auth.yaml \
+  --stack-name quizapp-dev-spike-events \
+  --resolve-s3 --capabilities CAPABILITY_IAM
+
+# Tear down when finished
+aws cloudformation delete-stack --profile quizdash --region ap-southeast-2 \
+  --stack-name quizapp-dev-spike-events
 ```

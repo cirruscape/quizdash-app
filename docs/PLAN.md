@@ -277,9 +277,18 @@ It costs real money, so it runs **on demand only**, not in CI.
 
 Stacks are named `quizapp-{env}-{stack}` and live in ap-southeast-2. They share values through `Export` and `Fn::ImportValue`.
 
+**Accounts:**
+
+| Environment | AWS account     | CLI profile |
+| ----------- | --------------- | ----------- |
+| dev         | `587736032611`  | `quizdash`  |
+| prod        | not yet decided | –           |
+
+The dev account also hosts unrelated `qd-*` production stacks. Quiz App stacks must stay self-contained under the `quizapp-` prefix. Lambda concurrency in dev is 1,000 in total, with about 833 unreserved at the time of Spike B.
+
 **Account constraints** (found during Spike B):
 
-- The account runs a CloudFormation Hook, `Tbs::Devops::LambdaCfnHooks`, that rejects any Lambda function without `ReservedConcurrentExecutions`. Every function must set it. The account has 2,000 concurrent executions in total, with about 1,885 unreserved at the time of the spike.
+- Every Lambda function sets `ReservedConcurrentExecutions`. The dev account doesn't require it, but the default-profile account (`048116471576`) runs a CloudFormation Hook, `Tbs::Devops::LambdaCfnHooks`, that rejects any function without it. Setting it everywhere also caps runaway cost, and keeps the templates deployable if prod ends up in that account.
 - Lambdas are bundled by `packages/api/bundle.mjs` (esbuild) into `dist-lambda/<name>/`, and SAM zips that folder as-is. SAM's own esbuild builder runs `npm install`, which breaks pnpm `workspace:*` dependencies. This replaces the "esbuild through SAM" choice in D9.
 
 | Stack           | Resources                                                                                                                                                                                                                                                                                                                                                                                                                         | Exports                                                          |
