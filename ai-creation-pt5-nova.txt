@@ -1,0 +1,165 @@
+BUILDING A QUIZ APP WITH CLAUDE CODE: PART 5 (FINISHING M0)
+===========================================================
+
+This continues ai-creation-pt4-nova.txt. It covers the same Claude Code
+session, from the commit that added part 4 up to this file.
+
+  Tool:   Claude Code (CLI), model Claude Opus 5.5
+  Date:   2026-10-26
+  Starts at:  commit 13f03cf (the model-mapping fix, plus part 4)
+  Ends at:    the commit that adds this file
+
+How to read this:
+  USER    is what the developer typed, verbatim.
+  CLAUDE  is Claude's reply, shortened where it was long.
+  [ ... ] marks an action Claude took with its tools. These summarise the
+          action; they are not the raw tool output.
+
+
+------------------------------------------------------------------------------
+1. SPIKE A PASSES
+------------------------------------------------------------------------------
+
+USER:
+Smoke test Spike A worked
+
+CLAUDE:
+That means Spike A is proven end to end in dev. GitHub Actions signed in
+with OIDC and built the arm64 image. CloudFormation created the AgentCore
+Runtime, the Strands agent called Nova 2 Lite through ConverseStream, and
+the reply contained "Canberra".
+
+  Scaffold, CI, deploy pipeline              Running on GitHub
+  Bootstrap (OIDC) and foundation stacks     Deployed
+  Spike A: agent on AgentCore + Bedrock      Smoke test passes (on Nova 2
+                                             Lite; Opus 5.5 waits on
+                                             Anthropic access)
+  Spike B: AppSync Events authoriser         Deployed, live checks not run
+
+So M0 has one item left. You can run the checks by hand, or tell me to
+treat the unit-tested authoriser as enough for M0.
+
+[Claude didn't declare M0 complete. It named the one remaining
+ verification, and offered the developer the choice of running it or
+ explicitly accepting the risk.]
+
+
+------------------------------------------------------------------------------
+2. RUNNING SPIKE B BY HAND: A GUIDED SESSION
+------------------------------------------------------------------------------
+
+USER:
+Remind me how to do Spike B
+
+[Claude wrote a step-by-step manual check for the four properties Spike B
+ must prove against the live AppSync Events API:
+   1. A Player can subscribe to their own Game's channel.
+   2. The same Player is refused another Game's channel.
+   3. The Player is refused publishing.
+   4. An IAM publish from the backend's side reaches subscribers.
+ The steps were: read the stack outputs and the signing secret with the
+ AWS CLI; mint a Player token using the repo's own signPlayerToken
+ function; connect with wscat; paste four protocol messages; and publish
+ from the AppSync console with IAM. Each step had its expected reply, plus
+ an optional teardown, with a reminder to also remove the pipeline job.]
+
+Two shell problems came up on the developer's machine. Claude diagnosed
+each one from the error text alone.
+
+USER:
+Running 1. above results in the following being displayed: -bash: !: event
+not found >
+
+CLAUDE:
+That's bash history expansion. In an interactive shell, a "!" inside
+double quotes means "recall a previous command". My snippet had one: the
+TypeScript process.env.KEY!. The failed expansion also left the shell
+waiting for the rest of the command, which is the ">" prompt.
+[Claude gave a corrected version that uses single quotes and no "!".]
+
+USER:
+Now I get: Command 'pnpm' not found, did you mean: command 'npm' from deb
+npm (9.2.0~ds1-2)
+
+CLAUDE:
+pnpm isn't installed on its own here. This repo runs it through Node's
+corepack. The simplest fix is to skip pnpm and run the repo's local copy of
+tsx directly.
+[Claude gave the one-line change, explained "corepack enable" as the
+ permanent fix, and noted that the apt npm suggestion hinted the terminal
+ might be using a different Node from the one the repo needs.]
+
+USER:
+the token printed, what next?
+
+[wscat can't read shell variables. So, instead of asking the developer to
+ hand-edit long JSON, Claude gave a printf command that prints the four
+ messages with the real token filled in. It gave a table of what to paste
+ and which reply to expect for each, then the console steps for the IAM
+ publish.]
+
+USER:
+all four checks passed
+
+Lesson for the blog: the one check Claude couldn't safely automate, a live
+auth test, became a short guided session instead. Claude explained what
+each step proves, predicted the expected replies, and fixed each snag the
+developer hit from the error message alone.
+
+
+------------------------------------------------------------------------------
+3. M0 COMPLETE
+------------------------------------------------------------------------------
+
+[Claude recorded M0's completion in docs/PLAN.md, so it wouldn't live only
+ in the conversation. The entry says:
+   - Spike A: CloudFormation supports AgentCore Runtime natively (no custom
+     resource needed); the image is built from an esbuild bundle; the
+     smoke test passes on Nova 2 Lite.
+   - Spike B: CloudFormation supports AppSync Events natively; all four
+     auth properties were checked against the live API.
+   - Findings that changed the plan: GitHub's immutable OIDC subjects,
+     esbuild bundling instead of SAM's builder, and the model as a
+     template mapping (ADR 0005). ]
+
+CLAUDE:
+Every item in M0's "done when" condition has passed in dev, so M0 is
+complete.
+One decision: keep the Spike B stack, or tear it down? I recommend keeping
+it until M2. The authoriser and Player-token code are the real M2
+versions, and the stack costs close to nothing while idle.
+Next is M1, the domain rules package. I'd build it test-first, writing a
+failing test for each PRD rule before its code.
+
+
+------------------------------------------------------------------------------
+4. THIS FILE
+------------------------------------------------------------------------------
+
+USER:
+Now write a file ./ai-creation-pt5-nova.txt which describes steps done
+since ./ai-creation-pt4-nova.txt. Then commit changes and start M1
+
+[Claude wrote this file, committed it with the plan update, and started
+ M1.]
+
+
+------------------------------------------------------------------------------
+WHERE THINGS STAND
+------------------------------------------------------------------------------
+
+M0 (foundations and spikes) is complete and running in dev:
+  - The GitHub Actions pipeline runs CI and deploys the foundation, agent
+    and Spike B stacks on every push to main.
+  - Spike A: a Strands agent on AgentCore, calling Bedrock through
+    ConverseStream, proven by a smoke test on every deploy.
+  - Spike B: the AppSync Events Player authoriser, proven by hand against
+    the live API.
+
+Carried forward:
+  - The model is Nova 2 Lite until the account has Anthropic access. Then
+    switch to Opus 5.5 by editing the Models mapping in infra/agent.yaml.
+  - The Spike B stack stays until M2 folds it into the real api stack.
+  - The prod account is undecided.
+
+Next: M1, the pure domain rules package, built test-first.

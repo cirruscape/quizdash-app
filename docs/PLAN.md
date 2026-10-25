@@ -323,6 +323,17 @@ Each milestone lists what gets built, then **Done when**, the condition for call
 - **Spike A (AgentCore and Bedrock):** deploy a Strands TS "hello" agent to AgentCore through the agent stack, and invoke the configured Bedrock model from it through the Converse API. This confirms CloudFormation support for `AWS::BedrockAgentCore::Runtime`, the image packaging, and the IAM model ARNs.
 - **Spike B (AppSync Events auth):** create an AppSync Events API in CloudFormation, with a Lambda authoriser that allows subscribing only to `/game/{id}/players`. Check that a browser subscribe works, that a publish from the browser is denied, and that an IAM publish from a Lambda is delivered.
 - **Done when:** both spikes work in dev, and any CloudFormation gaps are recorded with a workaround, for example a custom resource. If either spike changes an ADR, update the ADR.
+- **Status: done (2026-10-26).** Both spikes work in dev, deployed by the pipeline.
+  - **Spike A:** CloudFormation supports `AWS::BedrockAgentCore::Runtime` natively, so no custom resource was needed. The arm64 image is built from an esbuild bundle. The deploy smoke test passes. It runs on Amazon Nova 2 Lite for now, because the account has no Anthropic access yet, which led to ADR 0005: Converse only, with the model as configuration.
+  - **Spike B:** CloudFormation supports `AWS::AppSync::Api` and `AWS::AppSync::ChannelNamespace` natively. Checked by hand against the live API:
+    - a Player subscribes to their own Game's channel;
+    - the same Player is refused another Game's channel;
+    - the Player is refused publishing;
+    - an IAM publish reaches the subscriber.
+  - **Findings that changed the plan:**
+    - GitHub's immutable OIDC subjects, so the bootstrap template now has `GitHubSubjectPrefix`;
+    - Lambdas and the agent are bundled with esbuild rather than SAM's builder;
+    - the model must be a template mapping, not a stack parameter (ADR 0005).
 
 ### M1: The domain core
 
