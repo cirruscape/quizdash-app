@@ -18,6 +18,6 @@ try {
     </StrictMode>,
   );
 } catch (err) {
-  root.textContent = 'Quiz App couldn’t start. Please reload the page.';
+  root.textContent = 'Trivolt couldn’t start. Please reload the page.';
   console.error(err);
 }
