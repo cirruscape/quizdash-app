@@ -98,6 +98,28 @@ async function smokeGeneration(token: string): Promise<void> {
   step(`generated a ${count}-Question Draft${count >= 5 ? ', approved it' : ''}, and deleted it`);
 }
 
+/**
+ * Waits until the API answers its health check. On an environment's first deploy, api.{domain}
+ * is brand new: its DNS records and API Gateway custom domain can take a few minutes to work
+ * after the stack completes, so the first request fails before reaching the API.
+ */
+async function waitForApi(timeoutMs = 300_000): Promise<void> {
+  const giveUpAt = Date.now() + timeoutMs;
+  for (;;) {
+    let problem: string;
+    try {
+      const res = await fetch(`${apiUrl}/api/health`);
+      if (res.ok) return;
+      problem = `HTTP ${res.status}`;
+    } catch (err) {
+      problem = String((err as Error).cause ?? err);
+    }
+    if (Date.now() > giveUpAt) throw new Error(`${apiUrl} isn't reachable: ${problem}`);
+    step(`  (waiting for ${apiUrl}: ${problem})`);
+    await new Promise((r) => setTimeout(r, 10_000));
+  }
+}
+
 /** Pushed events expected, and how many AppSync dropped (it's at-most-once delivery). */
 let expected = 0;
 let lost = 0;
@@ -131,6 +153,9 @@ async function eventOrSnapshot<T>(
 }
 
 try {
+  step(`waiting for the API at ${apiUrl}`);
+  await waitForApi();
+
   step('signing in the smoke-test Host');
   const host = await signInSmokeHost(
     foundation.UserPoolId as string,
