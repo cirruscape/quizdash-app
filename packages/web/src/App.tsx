@@ -1,6 +1,8 @@
 import { lazy, Suspense } from 'react';
-import { Link, Route, Routes } from 'react-router';
+import { Route, Routes } from 'react-router';
+import { AboutPage } from './AboutPage.js';
 import { Page } from './components.js';
+import { HomePage } from './HomePage.js';
 import { Layout } from './layout.js';
 import { JoinPage } from './play/JoinPage.js';
 import { PlayerGame } from './play/PlayerGame.js';
@@ -15,7 +17,8 @@ export function App() {
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<Home />} />
+        <Route path="/" element={<HomePage />} />
+        <Route path="/about" element={<AboutPage />} />
         <Route path="/play" element={<JoinPage />} />
         <Route path="/play/game" element={<PlayerGame />} />
         <Route
@@ -26,24 +29,8 @@ export function App() {
             </Suspense>
           }
         />
-        <Route path="*" element={<Home />} />
+        <Route path="*" element={<HomePage />} />
       </Routes>
     </Layout>
-  );
-}
-
-function Home() {
-  return (
-    <Page title="Trivolt">
-      <p className="muted">Live trivia: the host runs the game, everyone plays on their phone.</p>
-      <div className="stack">
-        <Link className="button button--primary" to="/play">
-          Join a game
-        </Link>
-        <Link className="button" to="/host">
-          Host a game
-        </Link>
-      </div>
-    </Page>
   );
 }

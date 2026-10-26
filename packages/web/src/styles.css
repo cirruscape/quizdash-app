@@ -1,9 +1,12 @@
 /* Trivolt: mobile-first, large tap targets, light and dark. */
 :root {
-  /* Cirruscape's palette (https://cirruscape.com), for the site header and footer. */
+  /* Cirruscape's palette (https://cirruscape.com), for the site header, footer and About page. */
   --brand-navy: #232f3e;
+  --brand-navy-light: #2e3b4e;
   --brand-orange: #ff9900;
   --brand-footer-text: #aeb8c4;
+  --brand-orange-dark: #ec7211;
+  --brand-shadow: 0 10px 30px rgba(35, 47, 62, 0.12);
   --bg: #f6f5f2;
   --surface: #ffffff;
   --text: #1c1b19;
@@ -73,7 +76,28 @@ body {
   padding: 0.75rem 1rem;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 1rem;
+}
+
+.site-header__link {
+  color: #ffffff;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+/* At least 44px tall, so the header's links are easy to tap on a phone. */
+.site-header__title,
+.site-header__link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 0.25rem;
+}
+
+.site-header__link:hover,
+.site-header__link:focus-visible {
+  color: var(--brand-orange);
 }
 
 .site-header__title {
@@ -95,6 +119,334 @@ body {
   font-size: 0.9rem;
   text-align: center;
   padding: 1.5rem 1rem;
+}
+
+/* Landing pages (Home, About): laid out like a company website, styled after cirruscape.com. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.container {
+  width: min(64rem, 100%);
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+.hero {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, var(--brand-navy) 0%, var(--brand-navy-light) 100%);
+  color: #ffffff;
+  padding: 3.5rem 0 4rem;
+}
+
+.hero::after {
+  content: '';
+  position: absolute;
+  right: -120px;
+  top: -120px;
+  width: 420px;
+  height: 420px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 153, 0, 0.25), transparent 70%);
+  pointer-events: none;
+}
+
+.hero__layout {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 2.5rem;
+  align-items: center;
+}
+
+@media (min-width: 52rem) {
+  .hero__layout {
+    grid-template-columns: 1.4fr 1fr;
+  }
+}
+
+/* The Player's way in: a white panel on the navy hero. */
+.joinpanel {
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius);
+  border-top: 4px solid var(--brand-orange);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25);
+  padding: 1.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.joinpanel h2 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.joinpanel p {
+  color: var(--muted);
+}
+
+.joinpanel__input {
+  width: 100%;
+  text-align: center;
+}
+
+.joinpanel__button {
+  border: none;
+  font: inherit;
+  font-weight: 700;
+  font-size: 1.1rem;
+  cursor: pointer;
+  text-align: center;
+}
+
+.hero__badge {
+  display: inline-block;
+  background: rgba(255, 153, 0, 0.15);
+  border: 1px solid var(--brand-orange);
+  color: var(--brand-orange);
+  padding: 0.3rem 0.9rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 1.25rem;
+}
+
+.hero h1 {
+  font-size: clamp(2rem, 5vw, 3.1rem);
+  line-height: 1.15;
+  max-width: 20ch;
+  margin: 0;
+}
+
+.hero__accent {
+  color: var(--brand-orange);
+}
+
+.hero__lead {
+  margin-top: 1.2rem;
+  font-size: 1.15rem;
+  color: #cdd6e0;
+  max-width: 55ch;
+}
+
+.hero__actions {
+  margin-top: 2rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.cta {
+  display: inline-block;
+  padding: 0.85rem 1.6rem;
+  border-radius: 10px;
+  font-weight: 600;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  transition:
+    transform 0.15s ease,
+    background 0.15s ease;
+}
+
+.cta:hover,
+.cta:focus-visible {
+  transform: translateY(-2px);
+}
+
+.cta--primary {
+  background: var(--brand-orange);
+  color: var(--brand-navy);
+  box-shadow: 0 8px 20px rgba(255, 153, 0, 0.35);
+}
+
+.cta--primary:hover,
+.cta--primary:focus-visible {
+  background: var(--brand-orange-dark);
+}
+
+.cta--secondary {
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.section {
+  padding: 3.5rem 0;
+}
+
+.section--alt {
+  background: var(--surface);
+}
+
+.section__title {
+  font-size: clamp(1.6rem, 3vw, 2.1rem);
+  text-align: center;
+  margin: 0 0 0.5rem;
+}
+
+.section__subtitle {
+  text-align: center;
+  color: var(--muted);
+  max-width: 60ch;
+  margin: 0 auto 2.25rem;
+}
+
+.tiles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
+  gap: 1.5rem;
+}
+
+.tiles--two {
+  grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr));
+}
+
+.tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 4px solid var(--brand-orange);
+  border-radius: var(--radius);
+  box-shadow: var(--brand-shadow);
+  padding: 1.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.section--alt .tile {
+  background: var(--bg);
+}
+
+.tile h3 {
+  font-size: 1.2rem;
+  margin: 0;
+}
+
+.tile p {
+  color: var(--muted);
+}
+
+.steps__number {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--brand-navy);
+  color: var(--brand-orange);
+  font-weight: 800;
+  font-size: 1.1rem;
+}
+
+.tile__icon {
+  font-size: 1.8rem;
+}
+
+/* The Cirruscape card is navy, so the logo's white-to-orange name reads as on cirruscape.com. */
+.section--alt .tile--brand,
+.tile--brand {
+  background: var(--brand-navy);
+  border-color: var(--brand-navy);
+  border-top-color: var(--brand-orange);
+}
+
+.tile--brand p {
+  color: #cdd6e0;
+}
+
+.tile__logo {
+  align-self: flex-start;
+  text-decoration: none;
+}
+
+.tile__more {
+  margin-top: auto;
+  color: var(--brand-orange);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.tile__more:hover,
+.tile__more:focus-visible {
+  text-decoration: underline;
+}
+
+.cirruscape-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 700;
+  font-size: 1.5rem;
+}
+
+.cirruscape-logo__mark {
+  display: inline-flex;
+  width: 42px;
+  height: 42px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--brand-orange);
+  color: var(--brand-navy);
+  font-size: 1.35rem;
+}
+
+.cirruscape-logo__name {
+  background: linear-gradient(90deg, #ffffff, var(--brand-orange));
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.about-person {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.about-person__avatar {
+  flex-shrink: 0;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--brand-orange), var(--brand-orange-dark));
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 1.4rem;
+  box-shadow: var(--brand-shadow);
+}
+
+.tile .about-person__role {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.closing {
+  padding: 3.5rem 0 4rem;
+  text-align: center;
+}
+
+.closing h2 {
+  font-size: clamp(1.6rem, 3vw, 2.1rem);
+  margin: 0 0 0.5rem;
+}
+
+.closing p {
+  color: var(--muted);
+  margin-bottom: 1.5rem;
 }
 
 .page {
