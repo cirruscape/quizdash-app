@@ -52,7 +52,7 @@ QUIZAPP_DEV_URL=https://<the dev CloudFront domain> corepack pnpm --filter @quiz
 
 The **dev** environment is AWS account `587736032611`, reached through the `quizdash` CLI profile. That profile has no default region, so every command passes `--region ap-southeast-2`. The prod account is not yet decided.
 
-Every push to `main` runs `.github/workflows/deploy.yml`, which deploys to dev:
+Every push to `main` runs `.github/workflows/deploy.yml`, which deploys to dev. Pushing a `v*` tag runs `.github/workflows/deploy-prod.yml`, which waits for approval, then deploys prod the same way. Both call `.github/workflows/deploy-env.yml`:
 
 1. **CI**: format, lint, typecheck, tests, and the web build.
 2. **foundation**: the `quizapp-dev-foundation` stack.
@@ -60,8 +60,9 @@ Every push to `main` runs `.github/workflows/deploy.yml`, which deploys to dev:
 4. **agent**: the `quizapp-dev-agent` stack, then a smoke test that invokes the agent and expects "Canberra" in the reply (Spike A).
 5. **api**: the `quizapp-dev-api` stack (HTTP API, the API Lambda, AppSync Events). This runs in parallel with steps 3 and 4.
 6. **smoke**: plays a whole Game against dev over HTTP and AppSync Events.
-7. **certs**: the `quizapp-dev-certs` stack in **us-east-1**, the website's certificate (CloudFront only accepts certificates from there). This runs in parallel with the others.
-8. **web**: the `quizapp-dev-web` stack (S3 and CloudFront), then the app itself. The job prints the app's URL, then checks the site and the `www.` redirect.
+7. **ops**: the `quizapp-{env}-ops` stack (alarms and a budget alert, emailed to `ALERT_EMAIL`), only when the GitHub Environment sets `ALERT_EMAIL`.
+8. **certs**: the `quizapp-dev-certs` stack in **us-east-1**, the website's certificate (CloudFront only accepts certificates from there). This runs in parallel with the others.
+9. **web**: the `quizapp-dev-web` stack (S3 and CloudFront), then the app itself. The job prints the app's URL, then checks the site and the `www.` redirect.
 
 Each environment's domain and Route 53 hosted zone are in `infra/params/{env}.json`. Dev is served at `https://dev.trivolt.app`, with `www.dev.trivolt.app` redirecting to it, and its API also at `https://api.dev.trivolt.app`. Prod gets `trivolt.app`. An empty `DomainName` deploys without a custom domain.
 
@@ -95,6 +96,34 @@ The GitHub OIDC provider exists only once per AWS account. If the account alread
 The deploy role trusts only jobs that run in this Environment.
 
 **3. Bedrock model access.** The agent currently uses **Amazon Nova 2 Lite**, through the global inference profile `global.amazon.nova-2-lite-v1:0`, because the account doesn't have Anthropic access yet. The intended model is Claude Opus 5.5 (`au.anthropic.claude-opus-5-5`). To switch, edit the environment's `ModelId` and `FoundationModelId` in the `Models` mapping at the top of `infra/agent.yaml`, then push. No code change is needed (ADR 0005). Don't make the model a stack parameter: `aws cloudformation deploy` keeps a parameter's previous value, so a changed default never reaches an existing stack.
+
+### Prod (one-time setup)
+
+Prod shares the dev account, with its own stacks, roles and GitHub Environment.
+
+**1. Bootstrap prod** (the account's GitHub OIDC provider already exists, from dev):
+
+```sh
+aws cloudformation deploy --profile quizdash --region ap-southeast-2 \
+  --stack-name quizapp-prod-bootstrap \
+  --template-file infra/bootstrap/github-oidc.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides Env=prod GitHubRepository=cirruscape/quizdash-app \
+    GitHubSubjectPrefix=repo:cirruscape@235645298/quizdash-app@1432826993 \
+    CreateOidcProvider=false \
+    ExistingOidcProviderArn=arn:aws:iam::587736032611:oidc-provider/token.actions.githubusercontent.com
+```
+
+**2. GitHub Environments** (Settings → Environments):
+
+- **`prod`:** the three variables from the prod bootstrap stack's outputs, as for dev, plus `ALERT_EMAIL`. Under **Deployment branches and tags**, allow only tags matching `v*`.
+- **`prod-approval`:** no variables. Add yourself under **Required reviewers**.
+
+**3. Confirm the alert subscription:** the first prod deploy sends an AWS confirmation email to `ALERT_EMAIL`. Alarms aren't emailed until you confirm it.
+
+**4. Activate the cost allocation tag:** in Billing → Cost allocation tags, activate `quizapp-env`. It appears up to 24 hours after the first tagged deploy. The budget counts nothing until then.
+
+**To deploy prod:** `git tag v1.0.0 && git push origin v1.0.0`, then approve the run in the Actions tab. Prod is served at `https://trivolt.app`.
 
 ### Manual deploys
 

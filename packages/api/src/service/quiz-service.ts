@@ -32,10 +32,16 @@ export interface QuizServiceDeps {
   generationLimit: number;
 }
 
+/** A refused Topic is the model's safeguard working, so it isn't counted as a failure. */
+export type JobOutcome = 'SUCCEEDED' | 'REFUSED' | 'FAILED' | 'SKIPPED';
+
 export interface QuizService {
   createQuiz(hostId: string, request: QuizRequest): Promise<Result<{ quizId: string }>>;
-  /** Runs a background job; called by the worker Lambda. Never throws for agent failures. */
-  runJob(job: QuizJob): Promise<void>;
+  /**
+   * Runs a background job; called by the worker Lambda. Never throws for agent failures.
+   * Reports the outcome, which the worker publishes for the failure-rate alarm (M5).
+   */
+  runJob(job: QuizJob): Promise<JobOutcome>;
   /** All the Host's Quizzes, whatever their status. */
   listQuizzes(hostId: string): Promise<Result<QuizListItem[]>>;
   /** The whole Quiz, correct answers included: only its Host ever sees this. */
@@ -129,9 +135,9 @@ export function createQuizService(deps: QuizServiceDeps): QuizService {
     }
   }
 
-  async function runGenerate(hostId: string, quizId: string): Promise<void> {
+  async function runGenerate(hostId: string, quizId: string): Promise<JobOutcome> {
     const quiz = await repo.getQuiz(hostId, quizId);
-    if (!quiz || quiz.status !== 'GENERATING') return;
+    if (!quiz || quiz.status !== 'GENERATING') return 'SKIPPED';
     const reply = await callAgent({
       mode: 'generate',
       topic: quiz.topic ?? '',
@@ -153,12 +159,18 @@ export function createQuizService(deps: QuizServiceDeps): QuizService {
                 : 'GENERATION_FAILED',
           },
     );
+    if (reply.status === 'success' && reply.questions.length > 0) return 'SUCCEEDED';
+    return reply.status === 'error' && reply.error === 'TOPIC_REFUSED' ? 'REFUSED' : 'FAILED';
   }
 
-  async function runRegenerate(hostId: string, quizId: string, questionId: string) {
+  async function runRegenerate(
+    hostId: string,
+    quizId: string,
+    questionId: string,
+  ): Promise<JobOutcome> {
     const quiz = await repo.getQuiz(hostId, quizId);
     const target = quiz?.questions.find((q) => q.questionId === questionId);
-    if (!quiz || target?.status !== 'REGENERATING') return;
+    if (!quiz || target?.status !== 'REGENERATING') return 'SKIPPED';
     const others = quiz.questions.filter((q) => q.questionId !== questionId).map((q) => q.text);
     const reply = await callAgent({
       mode: 'regenerate',
@@ -172,6 +184,8 @@ export function createQuizService(deps: QuizServiceDeps): QuizService {
         ? { type: 'RegenerateSucceeded', questionId, question: { ...fresh, questionId } }
         : { type: 'RegenerateFailed', questionId },
     );
+    if (fresh) return 'SUCCEEDED';
+    return reply.status === 'error' && reply.error === 'TOPIC_REFUSED' ? 'REFUSED' : 'FAILED';
   }
 
   return {
@@ -189,8 +203,9 @@ export function createQuizService(deps: QuizServiceDeps): QuizService {
     },
 
     async runJob(job) {
-      if (job.kind === 'generate') await runGenerate(job.hostId, job.quizId);
-      else await runRegenerate(job.hostId, job.quizId, job.questionId);
+      return job.kind === 'generate'
+        ? runGenerate(job.hostId, job.quizId)
+        : runRegenerate(job.hostId, job.quizId, job.questionId);
     },
 
     async regenerateQuestion(hostId, quizId, questionId) {

@@ -1,5 +1,6 @@
 {
   "Env": "dev",
   "DomainName": "dev.trivolt.app",
-  "HostedZoneId": "Z00841461JB6KK1GON7XJ"
+  "HostedZoneId": "Z00841461JB6KK1GON7XJ",
+  "MonthlyBudgetUsd": 20
 }

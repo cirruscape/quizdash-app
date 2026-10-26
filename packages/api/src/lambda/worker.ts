@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { createAgentClient } from '../aws/quiz-jobs.js';
 import { DynamoRepository } from '../repository/dynamo-repository.js';
 import { createQuizService, type QuizJob } from '../service/quiz-service.js';
+import { jobMetrics } from './job-metrics.js';
 
 const quizzes = createQuizService({
   repo: new DynamoRepository(required('TABLE_NAME')),
@@ -17,7 +18,8 @@ const quizzes = createQuizService({
 });
 
 export const handler = async (job: QuizJob): Promise<void> => {
-  await quizzes.runJob(job);
+  const metrics = jobMetrics(await quizzes.runJob(job), required('APP_ENV'), Date.now());
+  if (metrics) console.log(JSON.stringify(metrics));
 };
 
 function required(name: string): string {

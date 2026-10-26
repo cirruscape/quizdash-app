@@ -169,6 +169,35 @@ describe('runJob: generate', () => {
       failureReason: 'GENERATION_FAILED',
     });
   });
+
+  it("reports each job's outcome, for the generation failure-rate alarm", async () => {
+    const h = harness();
+    await created(h);
+    expect(await h.service.runJob(h.jobs[0]!)).toBe('SUCCEEDED');
+    // A job for a Quiz that's no longer generating does nothing.
+    expect(await h.service.runJob(h.jobs[0]!)).toBe('SKIPPED');
+
+    await created(h);
+    h.reply({ status: 'error', error: 'TOPIC_REFUSED' });
+    expect(await h.service.runJob(h.jobs[1]!)).toBe('REFUSED');
+
+    await created(h);
+    h.reply(new Error('AgentCore timed out'));
+    expect(await h.service.runJob(h.jobs[2]!)).toBe('FAILED');
+  });
+});
+
+describe('runJob: regenerate outcome', () => {
+  it('reports a regenerated Question as SUCCEEDED, and an agent crash as FAILED', async () => {
+    const h = await withDraft();
+    await h.service.regenerateQuestion(HOST, h.quizId, h.questionIds[0]!);
+    h.reply({ status: 'success', questions: generated(1) });
+    expect(await h.service.runJob(h.jobs.shift()!)).toBe('SUCCEEDED');
+
+    await h.service.regenerateQuestion(HOST, h.quizId, h.questionIds[1]!);
+    h.reply(new Error('AgentCore timed out'));
+    expect(await h.service.runJob(h.jobs.shift()!)).toBe('FAILED');
+  });
 });
 
 /** A harness with one generated Draft of 6 Questions. */

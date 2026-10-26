@@ -423,6 +423,13 @@ Each milestone lists what gets built, then **Done when**, the condition for call
 
 ### M5: Production
 
+- **Status (2026-10-26): built, not yet deployed.** Decisions (agreed):
+  - **Account:** prod shares the dev account (`587736032611`), kept apart by the `quizapp-prod-` prefix, its own Cognito pool, table, roles and GitHub Environment. The `trivolt.app` zone is already there. The cost is weaker isolation: each environment's CloudFormation execution role is an administrator in the shared account.
+  - **Trigger:** a `v*` tag runs `deploy-prod.yml`. A gate job in the `prod-approval` GitHub Environment waits for a reviewer, then the same reusable `deploy-env.yml` that deploys dev deploys prod, smoke tests included, with a prod test Host.
+  - **Alerts:** the ops stack emails `ALERT_EMAIL`, a GitHub Environment variable kept out of the repo, about Lambda errors (API, worker, sweeper, events authoriser), DynamoDB throttles, and a generation failure rate over 50% of at least 3 jobs in an hour. The worker publishes job outcomes as CloudWatch embedded metrics. Refused Topics don't count as failures.
+  - **Budget:** US$20 a month (D11), on Nova 2 Lite like dev. The account hosts other workloads, so the budget counts only resources tagged `quizapp-env=prod`. Every stack is now deployed with that tag. Bedrock model usage isn't tagged, so it isn't counted.
+  - **Data protection** was already in foundation since M0: PITR, Retain policies, and Cognito deletion protection in prod.
+
 - **Deploy pipeline (`deploy.yml`):**
   - a push to `main` deploys to **dev** and runs the smoke test;
   - a `v*` tag, or a manual workflow run, deploys to **prod**, behind a GitHub Environment approval.

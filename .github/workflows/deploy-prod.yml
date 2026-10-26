@@ -1,0 +1,40 @@
+name: Deploy prod
+
+# Pushing a v* tag deploys that commit to prod, after approval (PLAN M5). See deploy-env.yml.
+# A manual run must also be started from a v* tag: the "prod" GitHub Environment only allows
+# v* tags, and its deploy role trusts only jobs in that Environment.
+#
+# The approval is a separate gate job in the "prod-approval" Environment, which has the
+# required reviewers. Putting reviewers on "prod" itself would ask once for every job.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  approve:
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: prod-approval
+    steps:
+      - run: echo "Approved deploying ${GITHUB_REF_NAME} (${GITHUB_SHA}) to prod."
+
+  prod:
+    needs: approve
+    uses: ./.github/workflows/deploy-env.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      env: prod

@@ -285,6 +285,23 @@ Resources:
             HostedZoneId: !GetAtt ApiCustomDomain.RegionalHostedZoneId
 
 Outputs:
+  # For the ops stack's alarms (M5).
+  ApiFunctionName:
+    Value: !Ref ApiFunction
+    Export:
+      Name: !Sub quizapp-${Env}-ApiFunctionName
+  WorkerFunctionName:
+    Value: !Ref WorkerFunction
+    Export:
+      Name: !Sub quizapp-${Env}-WorkerFunctionName
+  SweeperFunctionName:
+    Value: !Ref SweeperFunction
+    Export:
+      Name: !Sub quizapp-${Env}-SweeperFunctionName
+  EventsAuthoriserFunctionName:
+    Value: !Ref EventsAuthoriserFunction
+    Export:
+      Name: !Sub quizapp-${Env}-EventsAuthoriserFunctionName
   PublicApiUrl:
     Description: The URL direct callers use, api.{DomainName} when there is one.
     Value: !If

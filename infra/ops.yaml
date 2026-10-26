@@ -1,0 +1,228 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Quiz App operations (PLAN M5): CloudWatch alarms emailed through SNS, and an AWS Budget alert.
+  Deployed for an environment whose GitHub Environment sets ALERT_EMAIL.
+  Stack name: quizapp-{env}-ops.
+
+Parameters:
+  Env:
+    Type: String
+    AllowedValues: [dev, prod]
+  AlertEmail:
+    Type: String
+    Description: Where alarms and budget alerts go. Kept out of the repo (a GitHub variable).
+    AllowedPattern: '[^@\s]+@[^@\s]+\.[^@\s]+'
+    NoEcho: true
+  MonthlyBudgetUsd:
+    Type: Number
+    Description: The monthly cost budget, in US dollars, from infra/params/{env}.json (D11).
+    MinValue: 1
+
+Resources:
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub quizapp-${Env}-alerts
+      DisplayName: !Sub Quiz App ${Env}
+
+  # The address receives a confirmation email first; alerts arrive only once it's confirmed.
+  AlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # ---------------------------------------------------------------- Lambda errors
+  # Any error in 5 minutes. Expected failures are 4xx responses, so a Lambda error is an
+  # unexpected exception (a 500 to the caller) or a timeout.
+  ApiErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub quizapp-${Env}-api-errors
+      AlarmDescription: The API Lambda threw an unexpected error or timed out.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-ApiFunctionName' }
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  WorkerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub quizapp-${Env}-worker-errors
+      AlarmDescription: The generation worker crashed or timed out, so a Quiz may be stuck generating.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-WorkerFunctionName' }
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  SweeperErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub quizapp-${Env}-sweeper-errors
+      AlarmDescription: The abandonment sweeper failed, so idle Games aren't being finished.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-SweeperFunctionName' }
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  # A refused subscription is a normal Allow/Deny answer, not a Lambda error, so this only
+  # fires when the authoriser itself breaks, which stops all real-time play.
+  AuthoriserErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub quizapp-${Env}-events-authoriser-errors
+      AlarmDescription: The real-time events authoriser is failing, so Players can't receive events.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-EventsAuthoriserFunctionName' }
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  # ---------------------------------------------------------------- DynamoDB
+  TableThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub quizapp-${Env}-table-throttles
+      AlarmDescription: DynamoDB throttled reads or writes on the table.
+      Metrics:
+        - Id: reads
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/DynamoDB
+              MetricName: ReadThrottleEvents
+              Dimensions:
+                - Name: TableName
+                  Value: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-TableName' }
+            Period: 300
+            Stat: Sum
+        - Id: writes
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/DynamoDB
+              MetricName: WriteThrottleEvents
+              Dimensions:
+                - Name: TableName
+                  Value: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-TableName' }
+            Period: 300
+            Stat: Sum
+        - Id: throttles
+          Expression: FILL(reads, 0) + FILL(writes, 0)
+          Label: Throttle events
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  # ---------------------------------------------------------------- Generation
+  # From the worker's embedded metrics (packages/api/src/lambda/job-metrics.ts). Refused Topics
+  # aren't failures. Fires when over half of at least 3 jobs in an hour failed.
+  GenerationFailureRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub quizapp-${Env}-generation-failure-rate
+      AlarmDescription: Over half of Quiz generations failed in the last hour (3 or more jobs).
+      Metrics:
+        - Id: failed
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: QuizApp
+              MetricName: GenerationFailed
+              Dimensions: [{ Name: Env, Value: !Ref Env }]
+            Period: 3600
+            Stat: Sum
+        - Id: succeeded
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: QuizApp
+              MetricName: GenerationSucceeded
+              Dimensions: [{ Name: Env, Value: !Ref Env }]
+            Period: 3600
+            Stat: Sum
+        - Id: rate
+          Expression: >-
+            IF(FILL(failed, 0) + FILL(succeeded, 0) >= 3,
+            FILL(failed, 0) / (FILL(failed, 0) + FILL(succeeded, 0)), 0)
+          Label: Generation failure rate
+      EvaluationPeriods: 1
+      Threshold: 0.5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  # ---------------------------------------------------------------- Cost
+  # The account hosts other workloads, so the budget counts only resources tagged with this
+  # environment (every Quiz App stack is deployed with --tags quizapp-env={env}). The tag must
+  # be activated once as a cost allocation tag in the Billing console. Bedrock model usage isn't
+  # tagged, so it's not counted here.
+  Budget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub quizapp-${Env}-monthly
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUsd
+          Unit: USD
+        CostFilters:
+          TagKeyValue: [!Sub 'user:quizapp-env$${Env}']
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+
+Outputs:
+  AlertTopicArn:
+    Value: !Ref AlertTopic

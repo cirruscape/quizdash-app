@@ -1,0 +1,192 @@
+BUILDING A QUIZ APP WITH CLAUDE CODE: PART 14 (M6 BUILT, THEN M5 PRODUCTION)
+============================================================================
+
+This continues ai-creation-M6-pt13.txt. It covers the same Claude Code
+session, from the commit that added part 13 up to this file.
+
+  Tool:   Claude Code (CLI), model Claude Opus 5.5
+  Date:   2026-10-26
+  Starts at:  commit 807cd89 (M6 planned, plus part 13)
+  Ends at:    the commit that adds this file
+
+How to read this:
+  USER    is what the developer typed, verbatim.
+  CLAUDE  is Claude's reply, shortened where it was long.
+  [ ... ] marks an action Claude took with its tools. These summarise the
+          action; they are not the raw tool output.
+
+
+------------------------------------------------------------------------------
+1. A BOOTSTRAP COMMAND THAT WASN'T NEEDED
+------------------------------------------------------------------------------
+
+USER:
+Show me required bootstrap deploy cli command to run
+
+CLAUDE:
+[Gave the command, but said there was no point running it yet. The
+ template hadn't changed, so it would report "No changes to deploy". The
+ new permissions would be added when M6 was built.]
+
+
+------------------------------------------------------------------------------
+2. BUILDING M6, AND CORRECTING THE PLAN
+------------------------------------------------------------------------------
+
+USER:
+Continue to M6
+
+[Claude read the bootstrap template before changing it. GitHub's deploy
+ role can only drive CloudFormation, with "Resource: *", which already
+ covers us-east-1. The resources themselves are created by a separate
+ execution role, which already has the rights it needs.]
+
+CLAUDE:
+That probably means M6 needs no bootstrap change, so the plan was wrong
+on that point.
+
+[The plan had said the developer would need to redeploy the bootstrap
+ stack. Claude corrected the plan rather than adding permissions that
+ nothing needed.]
+
+[A second correction came from reading the stacks. The web stack imports
+ the API's address from the api stack, and CloudFormation won't change an
+ exported value while another stack imports it. So CloudFront kept its
+ existing route to the API, and api.{domain} was added alongside it for
+ scripts and the smoke test. The app behaves the same, still with no
+ CORS.]
+
+[The www redirect lives in a CloudFront Function written inline in the
+ template. It was built test-first: the test reads the function's code
+ straight out of web.yaml and runs it, so the tested code is exactly what
+ deploys. Red: no such code yet. Green: www redirects with a 301, keeping
+ the path and query string, and app routes still get index.html.]
+
+[The rest:
+   - a us-east-1 certificate stack, because CloudFront accepts
+     certificates only from there;
+   - a regional certificate and custom domain for the API;
+   - DNS records for every name;
+   - every domain value read from infra/params/{env}.json on every
+     deploy;
+   - a pipeline step that checks the live site and the redirect.]
+
+[Checks along the way:
+   - cfn-lint gave a false-positive warning on the empty default
+     certificate ARN. Claude added a real validation pattern, and
+     suppressed the warning only on that one resource, with a comment.
+   - The API mapping depends on a resource SAM generates. Claude ran the
+     SAM transform locally to confirm the generated name, rather than
+     trusting memory.
+   - A GitHub job output is silently dropped if it contains a masked
+     value, and the certificate ARN contains the account ID. Claude turned
+     masking off for that one job.]
+
+USER:
+commit it
+
+
+------------------------------------------------------------------------------
+3. M5, THIS TIME WITH ANSWERS
+------------------------------------------------------------------------------
+
+USER:
+Also run M5 for prod deployment
+
+[M5's questions from part 13 were still open, so Claude asked them again,
+ each with a recommendation:]
+
+  Account:  prod in the dev account (the domain's zone is already there),
+            accepting weaker isolation. Agreed.
+  Alerts:   to the developer's own email, stored as a GitHub variable,
+            never in the repo. Agreed.
+  Trigger:  a v* tag, then an approval. Agreed.
+  Budget:   US$20 a month, on Nova like dev. Agreed.
+
+[Claude checked what prod already had. Data protection (point-in-time
+ recovery, retained data, Cognito deletion protection) had been in the
+ foundation stack since M0, so nothing new was needed.]
+
+[The generation failure-rate alarm needed a number that didn't exist yet:
+ the worker logged crashes, but not successes or refusals.]
+
+CLAUDE:
+I'll have the job report its outcome, and the worker will publish it as
+metrics through CloudWatch's Embedded Metric Format, a structured log
+line that becomes a metric. That needs no new SDK and no new permissions.
+
+[Test-first, in two steps:
+   - The service: runJob reports SUCCEEDED, REFUSED, FAILED or SKIPPED.
+     Red, because it returned nothing.
+   - The metric line, as a pure function. Red, because the module didn't
+     exist yet.
+ A refused Topic counts separately, not as a failure, because a refusal is
+ the model's safeguard working.]
+
+[Claude checked one assumption before trusting the API's error alarm: that
+ expected failures come back as 4xx responses, and only unexpected
+ exceptions count as Lambda errors. The code confirmed it, and Claude
+ corrected a comment that had described it slightly wrongly.]
+
+[The budget: the account also runs unrelated production workloads, so a
+ whole-account budget would alert on someone else's spending. Every stack
+ is now tagged quizapp-env={env}, and the budget counts only that tag.
+ Claude noted the gap: Bedrock model usage can't be tagged, so it isn't
+ counted.]
+
+[The pipeline was restructured. The dev deploy became a reusable workflow
+ that takes the environment as an input, so dev and prod run the same
+ steps. A prod deploy starts from a v* tag. The approval is a separate
+ gate job: required reviewers on the deploying Environment itself would
+ have asked once for every job. Claude installed actionlint to validate
+ the workflows, because a workflow can't be run locally.]
+
+[Sharing an account meant every resource name needed the environment in
+ it. Claude searched the templates for any that didn't.]
+
+CLAUDE:
+[Listed what only the developer can do:
+   - run the prod bootstrap (reusing the account's existing OIDC
+     provider, which Claude looked up);
+   - create the "prod" and "prod-approval" GitHub Environments;
+   - confirm the alert email subscription;
+   - activate the cost allocation tag in Billing.
+ Not verified yet: that the alarms actually fire.]
+
+
+------------------------------------------------------------------------------
+4. THIS FILE
+------------------------------------------------------------------------------
+
+USER:
+Now write a file ./ai-creation-M5-pt14.txt which describes steps done
+since ./ai-creation-m6-pt13.txt. Then commit changes
+
+[Claude wrote this file and committed.]
+
+
+------------------------------------------------------------------------------
+WHERE THINGS STAND
+------------------------------------------------------------------------------
+
+M6 is committed: custom domains, waiting on a push. M5 is committed with
+this file, but prod is not deployed yet. Next:
+  1. Push main, so dev deploys through the restructured pipeline.
+  2. The developer bootstraps prod and sets up the GitHub Environments.
+  3. Push a v1.0.0 tag, approve it, and prod comes up on trivolt.app.
+  4. Force one alarm to fire, to check the alerts arrive.
+
+Observations worth blogging about:
+  - The plan was corrected twice by reading the actual code: no bootstrap
+    change was needed, and an export can't change while it's imported.
+    Plans written before the code is read are hypotheses.
+  - The cheapest permission change is the one you find you don't need.
+  - Infrastructure logic got a real test by running the code taken out of
+    the template, so the test can't drift from what deploys.
+  - An alarm needed a metric, and the metric needed a domain decision: a
+    refusal isn't a failure.
+  - Sharing an account was an accepted trade-off. It brought its own
+    checklist: names, tags, and a budget that doesn't count other
+    workloads.
+  - Claude kept the developer's email out of the repo and out of this
+    write-up, even though it's used for alerts.
