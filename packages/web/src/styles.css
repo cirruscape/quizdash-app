@@ -1,5 +1,9 @@
-/* Quiz App: mobile-first, large tap targets, light and dark. */
+/* Trivolt: mobile-first, large tap targets, light and dark. */
 :root {
+  /* Cirruscape's palette (https://cirruscape.com), for the site header and footer. */
+  --brand-navy: #232f3e;
+  --brand-orange: #ff9900;
+  --brand-footer-text: #aeb8c4;
   --bg: #f6f5f2;
   --surface: #ffffff;
   --text: #1c1b19;
@@ -45,6 +49,52 @@ body {
   background: var(--bg);
   color: var(--text);
   line-height: 1.45;
+}
+
+/* Site header and footer, styled after cirruscape.com. They're navy in light and dark modes. */
+.site {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.site-main {
+  flex: 1;
+}
+
+.site-header {
+  background: var(--brand-navy);
+  color: #ffffff;
+}
+
+.site-header__inner {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.site-header__title {
+  color: #ffffff;
+  font-size: 1.3rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+}
+
+.site-header__title:hover,
+.site-header__title:focus-visible {
+  color: var(--brand-orange);
+}
+
+.site-footer {
+  background: var(--brand-navy);
+  color: var(--brand-footer-text);
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 1.5rem 1rem;
 }
 
 .page {
