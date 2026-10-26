@@ -39,6 +39,16 @@ export interface GameRepository {
   putQuiz(hostId: string, quiz: Quiz): Promise<void>;
   getQuiz(hostId: string, quizId: string): Promise<Quiz | null>;
   listQuizzes(hostId: string): Promise<Quiz[]>;
+  /** A Quiz with its optimistic-locking version (putQuiz writes version 1). */
+  getStoredQuiz(hostId: string, quizId: string): Promise<{ quiz: Quiz; version: number } | null>;
+  /** Replaces the Quiz if still at `expectedVersion`; throws ConflictError otherwise. */
+  saveQuiz(hostId: string, quiz: Quiz, expectedVersion: number): Promise<number>;
+  deleteQuiz(hostId: string, quizId: string): Promise<void>;
+  /**
+   * Uses one of the Host's generations for `day`, if they have fewer than `limit` (FR-2.7).
+   * Atomic, so simultaneous requests can't exceed the limit. `now` sets the record's expiry.
+   */
+  useGeneration(hostId: string, day: string, limit: number, now: number): Promise<boolean>;
 
   getGame(gameId: string): Promise<StoredGame | null>;
   /** Stores a new Game at version 1. Throws ConflictError if the gameId exists. */

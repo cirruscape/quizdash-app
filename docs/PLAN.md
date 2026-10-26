@@ -379,6 +379,15 @@ Each milestone lists what gets built, then **Done when**, the condition for call
 
 ### M3: Quiz generation
 
+- **Status (2026-10-26): built, test-first, but not yet deployed.**
+  - Seams: G1, the Quiz lifecycle in the domain; G2, the agent pipeline with the model faked; G3, the API through S1–S3.
+  - Decisions made while building it:
+    - The worker is an asynchronous Lambda invoke with Lambda's automatic retries **off**, so a job never generates twice. Any failure marks the Quiz Failed.
+    - Topics are 3–80 characters, with no Comprehend check; the model's refusal is the safeguard.
+    - "Similar Topics" (FR-2.5) means sharing a distinctive word.
+    - The daily limit counts both generations and per-Question regenerations. It's checked only after a request is known to be valid, and it resets at midnight in Sydney.
+  - Every deploy's smoke test generates a real 5-Question Quiz, approves it if it can, and deletes it.
+
 - **Agent:** the `generate` and `regenerateQuestion` modes with the generate, verify and regenerate pipeline (§8), in a container on AgentCore.
 - **Back end:**
   - the routes `POST /quizzes`, `GET /quizzes[/{id}]`, `DELETE`, discard, regenerate, `PATCH` Time Limit, and approve;

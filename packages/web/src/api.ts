@@ -42,6 +42,13 @@ const MESSAGES: Record<string, string> = {
   NO_PLAYERS: 'Wait for at least one player to join.',
   DEADLINE_PASSED: 'Too late: time was up for that question.',
   TOO_MANY_CONFLICTS: 'The game is busy. Please try again.',
+  QUOTA_EXCEEDED: 'You’ve used today’s 20 quiz generations. They reset at midnight (Sydney time).',
+  INVALID_TOPIC: 'Give the topic 3–80 characters.',
+  INVALID_QUESTION_COUNT: 'Choose between 5 and 20 questions.',
+  INVALID_TIME_LIMIT: 'Choose a time limit between 5 and 120 seconds.',
+  TOO_FEW_QUESTIONS: 'A quiz needs at least 5 questions. Regenerate some you discarded.',
+  QUESTION_REGENERATING: 'Wait for the question being regenerated to finish.',
+  ALREADY_REGENERATING: 'That question is already being regenerated.',
 };
 
 export function messageFor(err: unknown): string {

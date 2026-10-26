@@ -8,6 +8,8 @@ import { handleHttp } from '../http/router.js';
 import { signPlayerToken, verifyPlayerToken } from '../player-token.js';
 import { DynamoRepository } from '../repository/dynamo-repository.js';
 import { createGameService } from '../service/game-service.js';
+import { createQuizService } from '../service/quiz-service.js';
+import { createJobStarter } from '../aws/quiz-jobs.js';
 
 /** How long a Player token stays valid (PLAN §5). */
 const PLAYER_TOKEN_TTL_SECONDS = 48 * 60 * 60;
@@ -17,6 +19,20 @@ const publish = createEventsPublisher(
   required('EVENTS_HTTP_DOMAIN'),
   process.env.AWS_REGION ?? 'ap-southeast-2',
 );
+
+/** Generations per Host per day (FR-2.7). */
+const GENERATION_LIMIT = 20;
+
+const quizzes = createQuizService({
+  repo,
+  now: () => Date.now(),
+  newId: randomUUID,
+  startJob: createJobStarter(required('WORKER_FUNCTION_NAME')),
+  agent: async () => {
+    throw new Error('only the worker Lambda calls the agent');
+  },
+  generationLimit: GENERATION_LIMIT,
+});
 
 /** A cryptographically random number in [0, 1), for Join Codes. */
 function secureRandom(): number {
@@ -57,6 +73,7 @@ export const handler = async (
     },
     {
       service,
+      quizzes,
       verifyPlayer: (token) => {
         const claims = verifyPlayerToken(token, key, nowSeconds());
         return claims ? { gameId: claims.gameId, playerId: claims.playerId } : null;

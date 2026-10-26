@@ -52,7 +52,10 @@ Resources:
           TABLE_NAME: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-TableName' }
           PLAYER_TOKEN_SECRET_ARN: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-PlayerTokenSecretArn' }
           EVENTS_HTTP_DOMAIN: !GetAtt EventsApi.Dns.Http
+          WORKER_FUNCTION_NAME: !Ref WorkerFunction
       Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref WorkerFunction
         - DynamoDBCrudPolicy:
             TableName: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-TableName' }
         - AWSSecretsManagerGetSecretValuePolicy:
@@ -70,6 +73,13 @@ Resources:
         PlayAnswer: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /api/play/answers, Method: POST, Auth: { Authorizer: NONE } } }
         # Hosts: the Cognito authoriser (the default)
         ListQuizzes: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /api/quizzes, Method: GET } }
+        CreateQuiz: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /api/quizzes, Method: POST } }
+        GetQuiz: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: '/api/quizzes/{quizId}', Method: GET } }
+        DeleteQuiz: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: '/api/quizzes/{quizId}', Method: DELETE } }
+        ApproveQuiz: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: '/api/quizzes/{quizId}/approve', Method: POST } }
+        DiscardQuestion: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: '/api/quizzes/{quizId}/questions/{questionId}', Method: DELETE } }
+        SetQuestionTimeLimit: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: '/api/quizzes/{quizId}/questions/{questionId}', Method: PATCH } }
+        RegenerateQuestion: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: '/api/quizzes/{quizId}/questions/{questionId}/regenerate', Method: POST } }
         ListHistory: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /api/history, Method: GET } }
         GetHistory: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: '/api/history/{gameId}', Method: GET } }
         CreateGame: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /api/games, Method: POST } }
@@ -77,6 +87,34 @@ Resources:
         HostSnapshot: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: '/api/games/{gameId}', Method: GET } }
         HostCommand: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: '/api/games/{gameId}/{command}', Method: POST } }
         RemovePlayer: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: '/api/games/{gameId}/players/{playerId}', Method: DELETE } }
+
+  # Runs Quiz generation in the background (PLAN §8). Invoked asynchronously by the API Lambda,
+  # with Lambda's automatic retries off, so a job never generates (or uses a generation) twice.
+  WorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../packages/api/dist-lambda/worker
+      MemorySize: 512
+      Timeout: 300
+      ReservedConcurrentExecutions: 5
+      Environment:
+        Variables:
+          TABLE_NAME: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-TableName' }
+          AGENT_RUNTIME_ARN: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-AgentRuntimeArn' }
+      EventInvokeConfig:
+        MaximumRetryAttempts: 0
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-TableName' }
+        - Statement:
+            - Sid: InvokeGenerationAgent
+              Effect: Allow
+              Action: bedrock-agentcore:InvokeAgentRuntime
+              Resource:
+                - { 'Fn::ImportValue': !Sub 'quizapp-${Env}-AgentRuntimeArn' }
+                - !Sub
+                  - '${RuntimeArn}/runtime-endpoint/*'
+                  - RuntimeArn: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-AgentRuntimeArn' }
 
   HealthFunction:
     Type: AWS::Serverless::Function

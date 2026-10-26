@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MemoryRepository } from '../repository/memory-repository.js';
 import { sampleQuiz, T0 } from '../repository/repository.contract.js';
 import { createGameService } from '../service/game-service.js';
+import { createQuizService, type QuizJob } from '../service/quiz-service.js';
 import { handleHttp, type HttpRequest, type HttpResponse } from './router.js';
 
 const HOST = 'host-1';
@@ -22,17 +23,35 @@ async function setup() {
     const [, gameId, playerId] = token.split('.');
     return token.startsWith('token.') && gameId && playerId ? { gameId, playerId } : null;
   };
+  const jobs: QuizJob[] = [];
+  const quizzes = createQuizService({
+    repo,
+    now: () => T0,
+    newId: () => `id${++ids}`,
+    startJob: async (job) => {
+      jobs.push(job);
+    },
+    agent: async () => ({
+      status: 'success',
+      questions: Array.from({ length: 5 }, (_, i) => ({
+        text: `Generated ${i}?`,
+        options: [
+          { optionId: 'a', text: 'Yes' },
+          { optionId: 'b', text: 'No' },
+        ],
+        correctOptionId: 'a',
+      })),
+    }),
+    generationLimit: 2,
+  });
   const call = (request: Partial<HttpRequest>): Promise<HttpResponse> =>
     handleHttp(
       { method: 'GET', path: '/', headers: {}, body: null, ...request },
-      {
-        service,
-        verifyPlayer,
-      },
+      { service, quizzes, verifyPlayer },
     );
 
   await repo.putQuiz(HOST, sampleQuiz('quiz1'));
-  return { repo, service, call };
+  return { repo, service, quizzes, jobs, call };
 }
 
 function json(response: HttpResponse): unknown {
@@ -195,7 +214,7 @@ describe('GET /api/quizzes', () => {
     const res = await call({ method: 'GET', path: '/api/quizzes', hostId: HOST });
     expect([res.statusCode, json(res)]).toEqual([
       200,
-      [{ quizId: 'quiz1', topic: null, questionCount: 1 }],
+      [{ quizId: 'quiz1', topic: null, status: 'READY', questionCount: 1, failureReason: null }],
     ]);
   });
 });
@@ -224,5 +243,80 @@ describe('History routes', () => {
 
     const intruder = await call({ method: 'GET', path: `/api/history/${gameId}`, hostId: 'x' });
     expect([intruder.statusCode, json(intruder)]).toEqual([404, { error: 'HISTORY_NOT_FOUND' }]);
+  });
+});
+
+describe('Quiz generation routes', () => {
+  it('generate in the background, then let the Host review and approve the Draft', async () => {
+    const { call, quizzes, jobs } = await setup();
+    const asHost = (method: string, path: string, body?: unknown) =>
+      call({ method, path, hostId: HOST, body: body === undefined ? null : JSON.stringify(body) });
+    const request = {
+      topic: 'Capitals',
+      difficulty: 'EASY',
+      questionCount: 5,
+      defaultTimeLimitSeconds: 20,
+    };
+
+    const created = await asHost('POST', '/api/quizzes', request);
+    expect(created.statusCode).toBe(202);
+    const { quizId } = json(created) as { quizId: string };
+    expect(json(await asHost('GET', `/api/quizzes/${quizId}`))).toMatchObject({
+      status: 'GENERATING',
+    });
+
+    await quizzes.runJob(jobs.shift()!); // what the worker Lambda does
+    const draft = json(await asHost('GET', `/api/quizzes/${quizId}`)) as {
+      status: string;
+      questions: { questionId: string }[];
+    };
+    expect(draft.status).toBe('DRAFT');
+    const [first, second] = draft.questions;
+
+    const timed = await asHost('PATCH', `/api/quizzes/${quizId}/questions/${first!.questionId}`, {
+      timeLimitSeconds: 45,
+    });
+    expect(timed.statusCode).toBe(200);
+    const regen = await asHost(
+      'POST',
+      `/api/quizzes/${quizId}/questions/${second!.questionId}/regenerate`,
+    );
+    expect(regen.statusCode).toBe(202);
+    await quizzes.runJob(jobs.shift()!);
+
+    const discarded = await asHost(
+      'DELETE',
+      `/api/quizzes/${quizId}/questions/${first!.questionId}`,
+    );
+    expect(discarded.statusCode).toBe(200);
+    const tooFew = await asHost('POST', `/api/quizzes/${quizId}/approve`);
+    expect([tooFew.statusCode, json(tooFew)]).toEqual([409, { error: 'TOO_FEW_QUESTIONS' }]);
+
+    expect((await asHost('DELETE', `/api/quizzes/${quizId}`)).statusCode).toBe(200);
+    expect((await asHost('GET', `/api/quizzes/${quizId}`)).statusCode).toBe(404);
+  });
+
+  it('answers 400 for a bad request, 429 over the daily limit, and 404 for another Host', async () => {
+    const { call } = await setup(); // limit 2
+    const post = (body: unknown, hostId = HOST) =>
+      call({ method: 'POST', path: '/api/quizzes', hostId, body: JSON.stringify(body) });
+    const request = {
+      topic: 'Capitals',
+      difficulty: 'EASY',
+      questionCount: 5,
+      defaultTimeLimitSeconds: 20,
+    };
+
+    const bad = await post({ ...request, questionCount: 50 });
+    expect([bad.statusCode, json(bad)]).toEqual([400, { error: 'INVALID_QUESTION_COUNT' }]);
+    expect((await post({ topic: 'x' })).statusCode).toBe(400);
+
+    const { quizId } = json(await post(request)) as { quizId: string };
+    await post(request);
+    const over = await post(request);
+    expect([over.statusCode, json(over)]).toEqual([429, { error: 'QUOTA_EXCEEDED' }]);
+
+    const theirs = await call({ method: 'GET', path: `/api/quizzes/${quizId}`, hostId: 'x' });
+    expect([theirs.statusCode, json(theirs)]).toEqual([404, { error: 'QUIZ_NOT_FOUND' }]);
   });
 });

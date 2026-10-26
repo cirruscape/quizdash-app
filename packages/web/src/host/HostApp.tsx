@@ -8,6 +8,8 @@ import { appConfig } from '../config.js';
 import { HostGame } from './HostGame.js';
 import { HostHistoryDetail, HostHistoryList } from './HostHistory.js';
 import { HostHome } from './HostHome.js';
+import { NewQuiz } from './NewQuiz.js';
+import { QuizPage } from './QuizPage.js';
 
 // Configured here, not in main.tsx, so Amplify stays out of the Players' bundle.
 const { userPoolId, userPoolClientId } = appConfig();
@@ -27,6 +29,8 @@ export function HostApp() {
           <Routes>
             <Route index element={<HostHome />} />
             <Route path="games/:gameId" element={<HostGame />} />
+            <Route path="quizzes/new" element={<NewQuiz />} />
+            <Route path="quizzes/:quizId" element={<QuizPage />} />
             <Route path="history" element={<HostHistoryList />} />
             <Route path="history/:gameId" element={<HostHistoryDetail />} />
           </Routes>

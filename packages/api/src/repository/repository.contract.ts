@@ -147,5 +147,32 @@ export function repositoryContract(name: string, makeRepository: () => GameRepos
       expect(await repo.listHistory(other)).toEqual([]);
       expect(await repo.getHistory(other, older.gameId)).toBeNull();
     });
+
+    it('saves a Quiz only against the version that was read, and can delete it', async () => {
+      const hostId = uniqueId('host');
+      const quiz = sampleQuiz(uniqueId('quiz'));
+      await repo.putQuiz(hostId, quiz);
+      expect(await repo.getStoredQuiz(hostId, quiz.quizId)).toEqual({ quiz, version: 1 });
+
+      const edited = { ...quiz, topic: 'Edited' };
+      expect(await repo.saveQuiz(hostId, edited, 1)).toBe(2);
+      await expect(repo.saveQuiz(hostId, quiz, 1)).rejects.toBeInstanceOf(ConflictError);
+      expect(await repo.getQuiz(hostId, quiz.quizId)).toEqual(edited);
+
+      await repo.deleteQuiz(hostId, quiz.quizId);
+      expect(await repo.getQuiz(hostId, quiz.quizId)).toBeNull();
+      expect(await repo.listQuizzes(hostId)).toEqual([]);
+    });
+
+    it("counts a Host's generations per day, up to the limit, atomically", async () => {
+      const [hostId, other] = [uniqueId('host'), uniqueId('host')];
+      const results = await Promise.all(
+        [1, 2, 3, 4].map(() => repo.useGeneration(hostId, '2026-10-26', 3, T0)),
+      );
+      expect(results.filter(Boolean)).toHaveLength(3); // never four, even at once
+      expect(await repo.useGeneration(hostId, '2026-10-26', 3, T0)).toBe(false);
+      expect(await repo.useGeneration(hostId, '2026-10-27', 3, T0)).toBe(true); // a new day
+      expect(await repo.useGeneration(other, '2026-10-26', 3, T0)).toBe(true); // a different Host
+    });
   });
 }

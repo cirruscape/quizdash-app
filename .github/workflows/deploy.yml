@@ -1,8 +1,8 @@
 name: Deploy
 
 # Deploys the M0 stacks to dev on every push to main (PLAN §9, §10):
-#   CI -> foundation -> agent image -> agent stack + Spike A smoke test
-#                    -> api stack -> API smoke test
+#   CI -> foundation -> agent image -> agent stack + generation smoke test
+#                                    -> api stack -> API smoke test
 #                             -> web stack + app
 # Prod deployment (tags, approvals) arrives in M5.
 #
@@ -138,11 +138,11 @@ jobs:
             --parameter-overrides Env="${APP_ENV}" ImageTag="${GITHUB_SHA}" \
             --no-fail-on-empty-changeset
 
-      - name: Smoke test (Spike A)
+      - name: Smoke test (the agent generates a small Quiz)
         run: |
           ARN=$(aws cloudformation describe-stacks --stack-name "quizapp-${APP_ENV}-agent" \
             --query "Stacks[0].Outputs[?OutputKey=='RuntimeArn'].OutputValue" --output text)
-          echo '{"prompt":"In one word, what is the capital city of Australia?"}' > payload.json
+          echo '{"mode":"generate","topic":"The solar system","difficulty":"EASY","count":3,"avoid":[]}' > payload.json
           # Session IDs must be at least 33 characters.
           aws bedrock-agentcore invoke-agent-runtime \
             --agent-runtime-arn "$ARN" \
@@ -151,10 +151,11 @@ jobs:
             --payload fileb://payload.json \
             response.json
           cat response.json; echo
-          jq -e '.status == "success" and (.response | test("canberra"; "i"))' response.json
+          jq -e '.status == "success" and (.questions | length) >= 1' response.json
 
   api:
-    needs: foundation
+    # The worker Lambda imports the agent runtime's ARN, so the agent stack goes first.
+    needs: [foundation, agent]
     runs-on: ubuntu-latest
     environment: dev
     permissions:

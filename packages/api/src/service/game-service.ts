@@ -60,17 +60,9 @@ export interface GameService {
   hostSnapshot(hostId: string, gameId: string): Promise<Result<HostSnapshot>>;
   /** The Host's unfinished Game, if any, so they can resume it from any device (FR-8.3). */
   activeGame(hostId: string): Promise<Result<{ gameId: string } | null>>;
-  /** The Host's Ready Quizzes, the ones a Game can be started from (FR-4.1). */
-  listQuizzes(hostId: string): Promise<Result<QuizSummary[]>>;
   /** The Host's Finished Games, newest first (FR-9.1, FR-9.2). */
   listHistory(hostId: string): Promise<Result<HistorySummary[]>>;
   getHistory(hostId: string, gameId: string): Promise<Result<HistoryRecord>>;
-}
-
-export interface QuizSummary {
-  quizId: string;
-  topic: string | null;
-  questionCount: number;
 }
 
 export interface PlayerIdentity {
@@ -191,20 +183,6 @@ export function createGameService(deps: ServiceDeps): GameService {
       if (!stored) return { ok: false, error: 'GAME_NOT_FOUND' };
       if (stored.game.hostId !== hostId) return { ok: false, error: 'NOT_YOUR_GAME' };
       return { ok: true, value: hostSnapshot(stored.game, stored.version, now()) };
-    },
-
-    async listQuizzes(hostId) {
-      const quizzes = await repo.listQuizzes(hostId);
-      return {
-        ok: true,
-        value: quizzes
-          .filter((q) => q.status === 'READY')
-          .map((q) => ({
-            quizId: q.quizId,
-            topic: q.topic ?? null,
-            questionCount: q.questions.length,
-          })),
-      };
     },
 
     async listHistory(hostId) {

@@ -9,7 +9,8 @@ import {
 } from './repository.js';
 
 export class MemoryRepository implements GameRepository {
-  private readonly quizzes = new Map<string, Quiz>();
+  private readonly quizzes = new Map<string, { quiz: Quiz; version: number }>();
+  private readonly generations = new Map<string, number>();
   private readonly games = new Map<string, StoredGame>();
   private readonly joinCodes = new Map<string, string>();
   private readonly activeGames = new Map<string, string>();
@@ -21,18 +22,43 @@ export class MemoryRepository implements GameRepository {
   }
 
   async putQuiz(hostId: string, quiz: Quiz): Promise<void> {
-    this.quizzes.set(`${hostId}/${quiz.quizId}`, structuredClone(quiz));
+    this.quizzes.set(`${hostId}/${quiz.quizId}`, { quiz: structuredClone(quiz), version: 1 });
   }
 
   async getQuiz(hostId: string, quizId: string): Promise<Quiz | null> {
-    const quiz = this.quizzes.get(`${hostId}/${quizId}`);
-    return quiz ? structuredClone(quiz) : null;
+    return (await this.getStoredQuiz(hostId, quizId))?.quiz ?? null;
+  }
+
+  async getStoredQuiz(hostId: string, quizId: string) {
+    const stored = this.quizzes.get(`${hostId}/${quizId}`);
+    return stored ? structuredClone(stored) : null;
+  }
+
+  async saveQuiz(hostId: string, quiz: Quiz, expectedVersion: number): Promise<number> {
+    const key = `${hostId}/${quiz.quizId}`;
+    if (this.quizzes.get(key)?.version !== expectedVersion) {
+      throw new ConflictError(`quiz ${quiz.quizId} is not at version ${expectedVersion}`);
+    }
+    this.quizzes.set(key, { quiz: structuredClone(quiz), version: expectedVersion + 1 });
+    return expectedVersion + 1;
+  }
+
+  async deleteQuiz(hostId: string, quizId: string): Promise<void> {
+    this.quizzes.delete(`${hostId}/${quizId}`);
+  }
+
+  async useGeneration(hostId: string, day: string, limit: number): Promise<boolean> {
+    const key = `${hostId}/${day}`;
+    const used = this.generations.get(key) ?? 0;
+    if (used >= limit) return false;
+    this.generations.set(key, used + 1);
+    return true;
   }
 
   async listQuizzes(hostId: string): Promise<Quiz[]> {
     return [...this.quizzes.entries()]
       .filter(([key]) => key.startsWith(`${hostId}/`))
-      .map(([, quiz]) => structuredClone(quiz));
+      .map(([, stored]) => structuredClone(stored.quiz));
   }
 
   async getGame(gameId: string): Promise<StoredGame | null> {

@@ -52,10 +52,32 @@ export interface HostSnapshot {
   serverNow: number;
 }
 
+export type QuizStatus = 'GENERATING' | 'DRAFT' | 'READY' | 'FAILED';
+
 export interface QuizSummary {
   quizId: string;
   topic: string | null;
+  status: QuizStatus;
   questionCount: number;
+  failureReason: string | null;
+}
+
+export interface QuizDetail {
+  quizId: string;
+  status: QuizStatus;
+  topic?: string;
+  difficulty?: 'EASY' | 'MEDIUM' | 'HARD';
+  requestedCount?: number;
+  defaultTimeLimitSeconds: number;
+  failureReason?: string | null;
+  questions: {
+    questionId: string;
+    text: string;
+    options: Option[];
+    correctOptionId: string;
+    timeLimitSeconds?: number;
+    status?: 'REGENERATING';
+  }[];
 }
 
 /** For the sync controller: the running deadline, if a Question is open. */

@@ -1,0 +1,211 @@
+BUILDING A QUIZ APP WITH CLAUDE CODE: PART 11 (M3, GENERATING QUIZZES FROM A TOPIC)
+==================================================================================
+
+This continues ai-creation-M2d-pt10.txt. It covers the same Claude Code
+session, from the commit that added part 10 up to this file.
+
+  Tool:   Claude Code (CLI), model Claude Opus 5.5
+  Date:   2026-10-26
+  Starts at:  commit 93b1851 (M2d, plus part 10)
+  Ends at:    the commit that adds this file
+
+How to read this:
+  USER    is what the developer typed, verbatim.
+  CLAUDE  is Claude's reply, shortened where it was long.
+  [ ... ] marks an action Claude took with its tools. These summarise the
+          action; they are not the raw tool output.
+
+
+------------------------------------------------------------------------------
+1. DECISIONS FIRST
+------------------------------------------------------------------------------
+
+USER:
+Commence M3
+
+CLAUDE:
+[Claude laid out the pieces: domain rules, the agent pipeline, the API
+ with a daily limit and a background worker, the web screens, and an
+ on-demand quality script. It asked four questions:]
+Q1. What to test (seams):
+      G1 the Quiz lifecycle rules (domain, pure)
+      G2 the agent's pipeline, with the model faked
+      G3 the API, through the existing S1-S3 seams, with the agent call
+         faked
+Q2. How the worker runs: an asynchronous Lambda call, with Lambda's
+    automatic retries turned off. A retry could otherwise generate twice
+    and use up two of the Host's daily allowance.
+Q3. Should the smoke test generate a real Quiz on every deploy? A fraction
+    of a cent on Nova 2 Lite.
+Q4. Topic rules: 3-80 characters, no Comprehend check; the model's refusal
+    is the safeguard.
+
+USER:
+yes, go with Q1–Q4 as recommended
+
+
+------------------------------------------------------------------------------
+2. G1: THE QUIZ LIFECYCLE, TEST-FIRST
+------------------------------------------------------------------------------
+
+[Slices, each red then green:]
+    - request rules, with every boundary tested (3 and 80 characters, 5 and
+      20 Questions, 5 and 120 seconds, fractional counts refused); a valid
+      request creates a Quiz marked "generating"
+    - generation outcomes: generating becomes Draft, or Failed with the
+      reason; a "success" with zero Questions is refused
+    - editing a Draft: discard, a Time Limit override (and clearing it);
+      unknown Questions refused; a Ready Quiz never changes (FR-3.3)
+    - regenerating one Question: marked while it runs, a second request
+      refused, the replacement keeps the Question's ID and Time Limit
+      override, and a failure restores the old Question
+    - approval: at least 5 Questions, nothing still regenerating, Drafts
+      only
+
+[One edit failed partway: prettier had reflowed a type union into a
+ different layout, so Claude's search text no longer matched, and the
+ script's check stopped it before writing anything. Claude read the
+ actual text and redid the edit. It also relaxed one lint rule, so leaving
+ properties out with "...rest" counts as deliberately unused.]
+
+
+------------------------------------------------------------------------------
+3. G2: THE GENERATION PIPELINE, WITH THE MODEL FAKED
+------------------------------------------------------------------------------
+
+[The model sits behind a two-operation interface (generate candidates,
+ verify one), so the pipeline is tested without Bedrock:]
+    - verified Questions come back with Options labelled a-d
+    - failures are dropped and replaced, and the replacement round asks
+      for just the shortfall while avoiding everything seen so far
+    - it stops after two replacement rounds, returning what passed
+    - nothing passing means GENERATION_FAILED; a refusal means
+      TOPIC_REFUSED
+    - code validation drops malformed Questions before spending a
+      verification call on them (wrong Option counts, duplicate or empty
+      Options, an out-of-range answer, empty or over-long text)
+    - repeats of the Host's earlier Questions, or of each other, are
+      dropped, ignoring case, spacing and punctuation
+
+[Before writing the real adapter, Claude read the installed Strands SDK's
+ type definitions. They showed that structured output can be passed per
+ call, and which stop reasons mean refusal or content filtering. The
+ adapter uses a question writer that can explicitly decline a Topic (a
+ schema field) and a sceptical fact-checker, both through the shared
+ Converse-only model module (ADR 0005).]
+
+[The agent's HTTP endpoint changed from Spike A's "answer a prompt" to the
+ generation contract (generate, or regenerate one Question). Its request
+ and response schemas went in the shared contracts package.]
+
+[Claude tried one real 3-Question generation from the laptop, to catch
+ prompt or schema problems early. The deploying IAM user isn't allowed to
+ call Bedrock, so it couldn't run. Claude reported that as an open risk:
+ the first real model call will be the deployed agent's smoke step.]
+
+
+------------------------------------------------------------------------------
+4. G3: THE API
+------------------------------------------------------------------------------
+
+[Repository contract, in memory AND on real DynamoDB:]
+    - Quizzes gain optimistic locking, because the worker writing a Draft
+      can race the Host editing it
+    - deleting a Quiz
+    - the daily limit as an atomic increment-if-below-the-limit: four
+      requests fired at once against a limit of three, and exactly three
+      got through
+[Quiz service, red then green:]
+    - creating a Quiz validates, counts against the limit, stores it as
+      generating, and hands off to a background job
+    - the limit resets at midnight in Sydney. The test checks that 12:30
+      and 13:30 UTC on 25 October fall on different Sydney days.
+    - the worker's job turns the Quiz into a Draft with fresh Question
+      IDs, and passes the agent the Host's earlier Questions on similar
+      Topics only
+    - a refusal marks the Quiz Failed (TOPIC_REFUSED); an agent crash marks
+      it Failed (GENERATION_FAILED) rather than leaving it generating
+      forever
+    - review operations, listing every status, deleting, all limited to
+      the Quiz's own Host
+    - regenerating one Question counts against the limit only once the
+      request is known to be valid, and avoids the Draft's other Questions
+[Routes: 202 for background work, 429 over the limit, 400 for bad input,
+ 404 for another Host's Quiz.]
+
+[One test setup edit silently matched nothing, because that replacement
+ had no check. The routes then failed with "deps.quizzes is undefined".
+ Claude found the unguarded edit, read the real text, and fixed it with a
+ checked edit.]
+
+[AWS adapters: an asynchronous worker invoke, an AgentCore client, and the
+ worker Lambda (5-minute timeout, automatic retries off, permitted to call
+ only the agent). The api stack now deploys after the agent stack, because
+ the worker imports the runtime's ARN. The agent's smoke step now asks for
+ 3 generated Questions.]
+
+
+------------------------------------------------------------------------------
+5. THE SCREENS, THE SMOKE TEST AND THE QUALITY SCRIPT
+------------------------------------------------------------------------------
+
+[Web:
+   - the Host's home lists every Quiz by status: Generating, Draft (with
+     Review), Ready (with Start a game), Failed (with the reason)
+   - a "New quiz" form
+   - the review page polls while the agent works, has per-Question
+     Regenerate, Discard and Time Limit controls, and shows why Approve is
+     disabled when it is ]
+[The smoke test now generates a real 5-Question Quiz on every deploy,
+ approves it if it can, and deletes it. It skips, rather than fails, if
+ the smoke Host has hit the daily limit.]
+[scripts/agent-eval.ts: an on-demand check of 15 Topics through the
+ deployed agent, including one that must be refused.]
+
+CLAUDE:
+M3 is built: Hosts can now create a Quiz from a Topic in the web app. All
+of it was built test-first. It passes 194 tests, plus format, lint,
+typecheck, cfn-lint, SAM validate, actionlint and the web build.
+Not verified yet: the first call to the real model. The pipeline's agent
+smoke step is the first real test. If something's off, the AgentCore
+runtime's CloudWatch logs will say why, and I can read those.
+
+
+------------------------------------------------------------------------------
+6. THIS FILE
+------------------------------------------------------------------------------
+
+USER:
+Now write a file ./ai-creation-M3-pt11.txt which describes steps done
+since ./ai-creation-m2d-pt10.txt. Then commit changes
+
+[Claude wrote this file and committed.]
+
+
+------------------------------------------------------------------------------
+WHERE THINGS STAND
+------------------------------------------------------------------------------
+
+M3 is built and committed, but not yet deployed. Next:
+  1. Push. The pipeline's agent smoke step makes the first real model call,
+     and the API smoke test then generates a whole Quiz through the worker.
+  2. Try New quiz in the app with a Topic.
+  3. Optionally, run the quality script for a broader check.
+Then M4 (moderation and the abandonment sweeper) and M5 (production).
+
+Observations worth blogging about:
+  - The AI part was designed so most of it can be tested without AI:
+    generate and verify are a two-operation interface, so the
+    orchestration, validation and de-duplication are covered by fast
+    tests.
+  - The model's output isn't trusted just because it parsed: code checks
+    every Question's shape before spending a verification call on it.
+  - Cost and fairness were designed in, not bolted on: an atomic daily
+    limit that can't be beaten by simultaneous requests, no automatic
+    retries that could charge twice, and the limit counted only after a
+    request is known to be valid.
+  - Claude used its own safety checks on edits, so a mismatched edit
+    stopped instead of silently corrupting a file. When one unchecked edit
+    did slip through, the failing tests caught it at once.
+  - Claude stated plainly what it couldn't verify locally (the real model
+    call) instead of claiming the feature worked.

@@ -5,6 +5,7 @@
 //   Join Code     PK JOINCODE#{code}     SK META              gameId
 //   Active Game   PK HOST#{hostId}       SK ACTIVE_GAME       gameId
 //   History       PK HOST#{hostId}       SK HISTORY#{gameId}  record
+//   Generations   PK HOST#{hostId}       SK QUOTA#{day}       used, ttl (FR-2.7)
 //
 // * Unfinished Games carry GSI1PK=UNFINISHED and GSI1SK=lastActivityAt, a sparse index the
 //   abandonment sweeper queries (FR-8.4, M4).
@@ -15,6 +16,7 @@ import {
   GetCommand,
   PutCommand,
   QueryCommand,
+  UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
 import type { Game, Quiz } from '@quizapp/domain';
 import {
@@ -42,9 +44,72 @@ export class DynamoRepository implements GameRepository {
     await this.db.send(
       new PutCommand({
         TableName: this.tableName,
-        Item: { PK: `HOST#${hostId}`, SK: `QUIZ#${quiz.quizId}`, quiz },
+        Item: { PK: `HOST#${hostId}`, SK: `QUIZ#${quiz.quizId}`, quiz, version: 1 },
       }),
     );
+  }
+
+  async getStoredQuiz(hostId: string, quizId: string) {
+    const res = await this.db.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: { PK: `HOST#${hostId}`, SK: `QUIZ#${quizId}` },
+        ConsistentRead: true,
+      }),
+    );
+    if (!res.Item) return null;
+    // Quizzes seeded before versioning existed count as version 1.
+    return { quiz: res.Item.quiz as Quiz, version: (res.Item.version as number | undefined) ?? 1 };
+  }
+
+  async saveQuiz(hostId: string, quiz: Quiz, expectedVersion: number): Promise<number> {
+    const version = expectedVersion + 1;
+    await this.conditional(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: { PK: `HOST#${hostId}`, SK: `QUIZ#${quiz.quizId}`, quiz, version },
+        ConditionExpression:
+          expectedVersion === 1
+            ? 'attribute_exists(PK) AND (attribute_not_exists(version) OR version = :expected)'
+            : 'version = :expected',
+        ExpressionAttributeValues: { ':expected': expectedVersion },
+      }),
+      `quiz ${quiz.quizId} is not at version ${expectedVersion}`,
+    );
+    return version;
+  }
+
+  async deleteQuiz(hostId: string, quizId: string): Promise<void> {
+    await this.db.send(
+      new DeleteCommand({
+        TableName: this.tableName,
+        Key: { PK: `HOST#${hostId}`, SK: `QUIZ#${quizId}` },
+      }),
+    );
+  }
+
+  async useGeneration(hostId: string, day: string, limit: number, now: number): Promise<boolean> {
+    try {
+      await this.db.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: { PK: `HOST#${hostId}`, SK: `QUOTA#${day}` },
+          UpdateExpression: 'ADD used :one SET #ttl = if_not_exists(#ttl, :ttl)',
+          ConditionExpression: 'attribute_not_exists(used) OR used < :limit',
+          ExpressionAttributeNames: { '#ttl': 'ttl' },
+          ExpressionAttributeValues: {
+            ':one': 1,
+            ':limit': limit,
+            // Kept a few days past the day it counts, then removed by DynamoDB TTL.
+            ':ttl': Math.floor(now / 1000) + 3 * 24 * 60 * 60,
+          },
+        }),
+      );
+      return true;
+    } catch (err) {
+      if (err instanceof ConditionalCheckFailedException) return false;
+      throw err;
+    }
   }
 
   async getQuiz(hostId: string, quizId: string): Promise<Quiz | null> {

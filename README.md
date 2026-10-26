@@ -37,12 +37,10 @@ To lint the templates, you also need cfn-lint (`pip install cfn-lint`). Then run
 ## Using the app (dev)
 
 1. Open the app URL (the **web** job prints it, or see the `quizapp-dev-web` stack's `Url` output).
-2. **Host:** choose _Host a game_, sign up with your email, and confirm it with the code Cognito sends. Until Quiz generation (M3) exists, give yourself the sample Quiz:
-   ```sh
-   AWS_PROFILE=quizdash corepack pnpm --filter @quizapp/scripts seed -- you@example.com
-   ```
-3. Start a game from the sample Quiz. The Lobby shows a Join Code and a join link.
-4. **Players:** open the join link (or _/play_ plus the code) on phones, pick a Nickname, and play.
+2. **Host:** choose _Host a game_, sign up with your email, and confirm it with the code Cognito sends.
+3. Choose **New quiz**, give it a Topic, and wait about a minute while it's written and fact-checked. Review the Draft: discard or regenerate Questions, adjust Time Limits, then **Approve**. Each Host gets 20 generations a day.
+4. Start a game from a Ready Quiz. The Lobby shows a Join Code and a join link.
+5. **Players:** open the join link (or _/play_ plus the code) on phones, pick a Nickname, and play.
 
 To work on the web app locally against dev:
 
@@ -119,11 +117,18 @@ sam deploy --profile quizdash --region ap-southeast-2 \
 ### Seeding and the smoke test
 
 ```sh
-# Give a Host (who has signed up) the sample Ready Quiz, so they can run a Game before M3.
+# Give a Host (who has signed up) the sample Ready Quiz, for a quick Game without generating one.
 AWS_PROFILE=quizdash corepack pnpm --filter @quizapp/scripts seed -- you@example.com
 
-# Play a whole Game against dev: a test Host and three bot Players, over HTTP and AppSync Events.
+# Play a whole Game against dev (a test Host and three bot Players, over HTTP and AppSync Events),
+# then generate, approve and delete a real Quiz.
 AWS_PROFILE=quizdash corepack pnpm --filter @quizapp/scripts smoke
+
+# Quality check for the generation agent: 15 Topics through the deployed agent. Costs model
+# usage; needs credentials allowed to invoke the runtime (the pipeline's deploy role can).
+corepack pnpm --filter @quizapp/scripts eval
 ```
+
+The sample Quiz (`seed`) is still useful for a quick Game without waiting for generation.
 
 The agent stack needs an image in ECR, so deploy it through the pipeline. Building the image locally requires Docker with arm64 support.

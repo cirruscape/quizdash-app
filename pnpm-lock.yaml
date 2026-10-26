@@ -218,7 +218,13 @@ importers:
       '@aws-crypto/sha256-js':
         specifier: ^5.2.0
         version: 5.2.0
+      '@aws-sdk/client-bedrock-agentcore':
+        specifier: ^3.1156.0
+        version: 3.1156.0
       '@aws-sdk/client-dynamodb':
+        specifier: ^3.1156.0
+        version: 3.1156.0
+      '@aws-sdk/client-lambda':
         specifier: ^3.1156.0
         version: 3.1156.0
       '@aws-sdk/client-secrets-manager':
@@ -300,6 +306,9 @@ importers:
 
   scripts:
     dependencies:
+      '@aws-sdk/client-bedrock-agentcore':
+        specifier: ^3.1156.0
+        version: 3.1156.0
       '@aws-sdk/client-cloudformation':
         specifier: ^3.1156.0
         version: 3.1156.0
@@ -410,6 +419,10 @@ packages:
   '@aws-crypto/util@5.2.0':
     resolution: {integrity: sha512-4RkU9EsI6ZpBve5fseQlGNUWKMa1RLPQ1dnjnQoe07ldfIzcsGb5hC5W0Dm7u423KWzawlrpbjXBrXCEv9zazQ==}
 
+  '@aws-sdk/client-bedrock-agentcore@3.1156.0':
+    resolution: {integrity: sha512-EIV6HrEeZGSA39y5P/S/R5FqIP3nq8H5i0JLtvZy9+jUKiMKL7wHbKuGthsqgnFGfGBvnkcU75qo+JoBir1AhQ==}
+    engines: {node: '>=20.0.0'}
+
   '@aws-sdk/client-bedrock-runtime@3.1156.0':
     resolution: {integrity: sha512-YtYsel8aoGP0K//ZO4qqgab6W/wYKHL+8MiWE4Z2SKKWz7MbVWMfUKKySdAle5RcE1yTviRF2RMlXE5MVPW/mA==}
     engines: {node: '>=20.0.0'}
@@ -432,6 +445,10 @@ packages:
 
   '@aws-sdk/client-kinesis@3.1156.0':
     resolution: {integrity: sha512-yY3PlcnOC34mKWEiGGulSUbks30zyMYj8Eq8Pn98DkWPBA6hdH15m0XAtibXEp33p+iObB9jqae7cU5kPxPpDA==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-lambda@3.1156.0':
+    resolution: {integrity: sha512-HMwqZ9ImXWSm7wRKytFaanXYbRm1wK4wPXz59mNgLZxNr461MLj3xfNGzJGnb6a3gZ0yYTkPwUDk0LGCwtb3bQ==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/client-personalize-events@3.1156.0':
@@ -2511,6 +2528,17 @@ snapshots:
       '@smithy/util-utf8': 2.3.0
       tslib: 2.8.1
 
+  '@aws-sdk/client-bedrock-agentcore@3.1156.0':
+    dependencies:
+      '@aws-sdk/core': 3.978.5
+      '@aws-sdk/credential-provider-node': 3.972.88
+      '@aws-sdk/types': 3.975.0
+      '@smithy/core': 3.36.2
+      '@smithy/fetch-http-handler': 5.8.0
+      '@smithy/node-http-handler': 4.12.1
+      '@smithy/types': 4.19.0
+      tslib: 2.8.1
+
   '@aws-sdk/client-bedrock-runtime@3.1156.0':
     dependencies:
       '@aws-sdk/core': 3.978.5
@@ -2573,6 +2601,17 @@ snapshots:
       tslib: 2.8.1
 
   '@aws-sdk/client-kinesis@3.1156.0':
+    dependencies:
+      '@aws-sdk/core': 3.978.5
+      '@aws-sdk/credential-provider-node': 3.972.88
+      '@aws-sdk/types': 3.975.0
+      '@smithy/core': 3.36.2
+      '@smithy/fetch-http-handler': 5.8.0
+      '@smithy/node-http-handler': 4.12.1
+      '@smithy/types': 4.19.0
+      tslib: 2.8.1
+
+  '@aws-sdk/client-lambda@3.1156.0':
     dependencies:
       '@aws-sdk/core': 3.978.5
       '@aws-sdk/credential-provider-node': 3.972.88

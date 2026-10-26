@@ -1,11 +1,18 @@
-// The Host's home: resume an unfinished Game from any device (FR-8.3), or start one from a Ready
-// Quiz (FR-4.1). Quiz generation (M3) will add "New Quiz" here.
+// The Host's home: resume an unfinished Game from any device (FR-8.3), generate a Quiz, review
+// Drafts, or start a Game from a Ready Quiz (FR-4.1).
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { api, messageFor } from '../api.js';
 import { ErrorNote, Page } from '../components.js';
 import type { QuizSummary } from '../types.js';
 import { hostToken } from './auth.js';
+
+const STATUS_LABEL: Record<QuizSummary['status'], string> = {
+  GENERATING: 'Generating…',
+  DRAFT: 'Draft',
+  READY: 'Ready',
+  FAILED: 'Failed',
+};
 
 export function HostHome() {
   const navigate = useNavigate();
@@ -58,30 +65,47 @@ export function HostHome() {
           </Link>
         </div>
       )}
+      <Link className="button button--primary" to="/host/quizzes/new">
+        New quiz
+      </Link>
       <ErrorNote message={error} />
       {quizzes === null ? (
         <p className="muted">Loading…</p>
       ) : quizzes.length === 0 ? (
-        <p className="muted">
-          No Ready quizzes yet. Quiz generation is coming soon; for now, ask for the sample quiz to
-          be added to your account.
-        </p>
+        <p className="muted">No quizzes yet. Choose New quiz and give it a topic.</p>
       ) : (
         <ul className="cards">
           {quizzes.map((q) => (
             <li key={q.quizId} className="card">
               <div>
                 <h2 className="card__title">{q.topic ?? q.quizId}</h2>
-                <p className="muted">{q.questionCount} questions</p>
+                <p className="muted">
+                  <span className={`badge badge--${q.status.toLowerCase()}`}>
+                    {STATUS_LABEL[q.status]}
+                  </span>{' '}
+                  {q.status !== 'GENERATING' &&
+                    q.status !== 'FAILED' &&
+                    `${q.questionCount} questions`}
+                  {q.status === 'FAILED' &&
+                    (q.failureReason === 'TOPIC_REFUSED'
+                      ? 'This topic couldn’t be used.'
+                      : 'Generation failed.')}
+                </p>
               </div>
-              <button
-                type="button"
-                className="button button--primary"
-                disabled={activeGameId !== null || starting !== null}
-                onClick={() => void startGame(q.quizId)}
-              >
-                {starting === q.quizId ? 'Starting…' : 'Start a game'}
-              </button>
+              {q.status === 'READY' ? (
+                <button
+                  type="button"
+                  className="button button--primary"
+                  disabled={activeGameId !== null || starting !== null}
+                  onClick={() => void startGame(q.quizId)}
+                >
+                  {starting === q.quizId ? 'Starting…' : 'Start a game'}
+                </button>
+              ) : (
+                <Link className="button" to={`/host/quizzes/${q.quizId}`}>
+                  {q.status === 'DRAFT' ? 'Review' : 'Open'}
+                </Link>
+              )}
             </li>
           ))}
         </ul>

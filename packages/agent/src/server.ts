@@ -1,33 +1,31 @@
 // AgentCore Runtime HTTP contract: listen on 0.0.0.0:8080 (arm64 image),
-// GET /ping for health, POST /invocations with a JSON body.
+// GET /ping for health, POST /invocations with a JSON AgentRequest (PLAN §8).
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { z } from 'zod';
-import { createAnswerer, type Answerer } from './answerer.js';
+import { AgentRequest, type AgentResponse } from '@quizapp/contracts';
+import { createBedrockGenerationModel } from './generation/bedrock-model.js';
+import { createGenerationHandler } from './generation/handler.js';
 import { modelConfigFromEnv } from './model.js';
 
 const PORT = 8080;
-const MAX_BODY_BYTES = 64 * 1024;
+const MAX_BODY_BYTES = 256 * 1024;
 
-const InvocationRequest = z.object({ prompt: z.string().min(1).max(4000) });
-
-export function createRouter(answer: Answerer) {
+export function createRouter(handle: (request: AgentRequest) => Promise<AgentResponse>) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (req.method === 'GET' && req.url === '/ping') {
       send(res, 200, { status: 'Healthy' });
       return;
     }
     if (req.method === 'POST' && req.url === '/invocations') {
-      const body = await readJson(req);
-      const parsed = InvocationRequest.safeParse(body);
+      const parsed = AgentRequest.safeParse(await readJson(req));
       if (!parsed.success) {
         send(res, 400, { status: 'error', error: 'INVALID_REQUEST' });
         return;
       }
       try {
-        send(res, 200, { status: 'success', response: await answer(parsed.data.prompt) });
+        send(res, 200, await handle(parsed.data));
       } catch (err) {
-        console.error('invocation failed', err);
-        send(res, 500, { status: 'error', error: 'INVOCATION_FAILED' });
+        console.error('generation failed', err);
+        send(res, 500, { status: 'error', error: 'GENERATION_FAILED' });
       }
       return;
     }
@@ -56,8 +54,8 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const answer = createAnswerer(modelConfigFromEnv());
-  createServer((req, res) => void createRouter(answer)(req, res)).listen(PORT, '0.0.0.0', () =>
+  const handle = createGenerationHandler(createBedrockGenerationModel(modelConfigFromEnv()));
+  createServer((req, res) => void createRouter(handle)(req, res)).listen(PORT, '0.0.0.0', () =>
     console.log(`agent listening on 0.0.0.0:${PORT}`),
   );
 }

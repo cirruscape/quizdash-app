@@ -393,20 +393,6 @@ describe('activeGame', () => {
   });
 });
 
-describe('listQuizzes', () => {
-  it("lists only the Host's own Ready Quizzes, as summaries", async () => {
-    const { service, repo } = harness();
-    await repo.putQuiz(HOST, { ...sampleQuiz('ready'), topic: 'Capitals' });
-    await repo.putQuiz(HOST, { ...sampleQuiz('draft'), status: 'DRAFT' });
-    await repo.putQuiz('someone-else', sampleQuiz('theirs'));
-
-    expect(await service.listQuizzes(HOST)).toEqual({
-      ok: true,
-      value: [{ quizId: 'ready', topic: 'Capitals', questionCount: 1 }],
-    });
-  });
-});
-
 describe('snapshot versions', () => {
   it("carry the Game's version, so clients can ignore out-of-date responses", async () => {
     const { service, gameId, players } = await startedGame('Alice');

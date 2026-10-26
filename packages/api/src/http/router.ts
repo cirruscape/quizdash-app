@@ -1,9 +1,16 @@
 // The HTTP layer (seam S2): routes requests to the game service, validates bodies with the
 // shared zod contracts, and maps service errors to status codes. Independent of the Lambda
 // event shape; lambda.ts adapts API Gateway events to HttpRequest.
-import { AnswerRequest, CreateGameRequest, JoinRequest } from '@quizapp/contracts';
+import {
+  AnswerRequest,
+  CreateGameRequest,
+  CreateQuizRequest,
+  JoinRequest,
+  SetTimeLimitRequest,
+} from '@quizapp/contracts';
 import type { z } from 'zod';
 import type { GameService, HostCommand, PlayerIdentity, Result } from '../service/game-service.js';
+import type { QuizService } from '../service/quiz-service.js';
 
 export interface HttpRequest {
   method: string;
@@ -22,6 +29,7 @@ export interface HttpResponse {
 
 export interface HttpDeps {
   service: GameService;
+  quizzes: QuizService;
   /** Verifies a Player token, returning who it belongs to, or null. */
   verifyPlayer: (token: string) => PlayerIdentity | null;
 }
@@ -81,7 +89,87 @@ const ROUTES: Route[] = [
     method: 'GET',
     pattern: /^\/api\/quizzes$/,
     auth: 'host',
-    handle: async ({ deps, hostId }) => reply(200, await deps.service.listQuizzes(hostId)),
+    handle: async ({ deps, hostId }) => reply(200, await deps.quizzes.listQuizzes(hostId)),
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/quizzes$/,
+    auth: 'host',
+    handle: async ({ request, deps, hostId }) => {
+      const body = parseBody(request, CreateQuizRequest);
+      if (!body) return error(400, 'INVALID_REQUEST');
+      // 202: the Quiz is generated in the background; the client polls it (FR-2.2).
+      return reply(202, await deps.quizzes.createQuiz(hostId, body));
+    },
+  },
+  {
+    method: 'GET',
+    pattern: new RegExp(`^/api/quizzes/(?<quizId>${ID})$`),
+    auth: 'host',
+    handle: async ({ params, deps, hostId }) =>
+      reply(200, await deps.quizzes.getQuiz(hostId, params.quizId as string)),
+  },
+  {
+    method: 'DELETE',
+    pattern: new RegExp(`^/api/quizzes/(?<quizId>${ID})$`),
+    auth: 'host',
+    handle: async ({ params, deps, hostId }) =>
+      reply(200, await deps.quizzes.deleteQuiz(hostId, params.quizId as string)),
+  },
+  {
+    method: 'POST',
+    pattern: new RegExp(`^/api/quizzes/(?<quizId>${ID})/approve$`),
+    auth: 'host',
+    handle: async ({ params, deps, hostId }) =>
+      reply(200, await deps.quizzes.approveQuiz(hostId, params.quizId as string)),
+  },
+  {
+    method: 'DELETE',
+    pattern: new RegExp(`^/api/quizzes/(?<quizId>${ID})/questions/(?<questionId>${ID})$`),
+    auth: 'host',
+    handle: async ({ params, deps, hostId }) =>
+      reply(
+        200,
+        await deps.quizzes.discardQuestion(
+          hostId,
+          params.quizId as string,
+          params.questionId as string,
+        ),
+      ),
+  },
+  {
+    method: 'PATCH',
+    pattern: new RegExp(`^/api/quizzes/(?<quizId>${ID})/questions/(?<questionId>${ID})$`),
+    auth: 'host',
+    handle: async ({ request, params, deps, hostId }) => {
+      const body = parseBody(request, SetTimeLimitRequest);
+      if (!body) return error(400, 'INVALID_REQUEST');
+      return reply(
+        200,
+        await deps.quizzes.setTimeLimit(
+          hostId,
+          params.quizId as string,
+          params.questionId as string,
+          body.timeLimitSeconds,
+        ),
+      );
+    },
+  },
+  {
+    method: 'POST',
+    pattern: new RegExp(
+      `^/api/quizzes/(?<quizId>${ID})/questions/(?<questionId>${ID})/regenerate$`,
+    ),
+    auth: 'host',
+    handle: async ({ params, deps, hostId }) =>
+      reply(
+        202,
+        await deps.quizzes.regenerateQuestion(
+          hostId,
+          params.quizId as string,
+          params.questionId as string,
+        ),
+      ),
   },
   {
     method: 'GET',
@@ -191,6 +279,12 @@ const STATUS: Record<string, number> = {
   GAME_NOT_FOUND: 404,
   QUIZ_NOT_FOUND: 404,
   HISTORY_NOT_FOUND: 404,
+  QUESTION_NOT_FOUND: 404,
+  INVALID_TOPIC: 400,
+  INVALID_DIFFICULTY: 400,
+  INVALID_QUESTION_COUNT: 400,
+  INVALID_TIME_LIMIT: 400,
+  QUOTA_EXCEEDED: 429,
   NICKNAME_FORMAT: 400,
   INVALID_OPTION: 400,
   NOT_YOUR_GAME: 403,

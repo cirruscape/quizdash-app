@@ -6,6 +6,7 @@ import { rm } from 'node:fs/promises';
 const entries = {
   health: 'src/health.ts',
   http: 'src/lambda/http.ts',
+  worker: 'src/lambda/worker.ts',
   'events-authoriser': 'src/events-authoriser.ts',
 };
 

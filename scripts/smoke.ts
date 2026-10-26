@@ -51,6 +51,53 @@ async function expectOk(
   return res.json;
 }
 
+/**
+ * Generates a real Quiz end to end (M3): the API, the worker Lambda, AgentCore and Bedrock.
+ * Approves it if it has enough Questions, then deletes it. Skips if the smoke Host has used
+ * today's generations (many deploys in one day), since that's the limit working, not a fault.
+ */
+async function smokeGeneration(token: string): Promise<void> {
+  const created = await call('POST', '/api/quizzes', {
+    token,
+    body: {
+      topic: 'The solar system',
+      difficulty: 'EASY',
+      questionCount: 5,
+      defaultTimeLimitSeconds: 20,
+    },
+  });
+  if (created.status === 429) {
+    step('Quiz generation skipped: the smoke Host has used today’s generations');
+    return;
+  }
+  assert.equal(
+    created.status,
+    202,
+    `POST /api/quizzes -> ${created.status} ${JSON.stringify(created.json)}`,
+  );
+  const quizId = created.json.quizId as string;
+
+  const giveUpAt = Date.now() + 180_000;
+  let quiz: { status: string; questions: unknown[]; failureReason?: string | null } | undefined;
+  while (Date.now() < giveUpAt) {
+    quiz = (await expectOk('GET', `/api/quizzes/${quizId}`, { token })) as typeof quiz;
+    if (quiz?.status !== 'GENERATING') break;
+    await new Promise((r) => setTimeout(r, 3_000));
+  }
+  assert.equal(
+    quiz?.status,
+    'DRAFT',
+    `generation ended as ${quiz?.status} (${quiz?.failureReason})`,
+  );
+  const count = quiz?.questions.length ?? 0;
+  if (count >= 5) {
+    const approved = await expectOk('POST', `/api/quizzes/${quizId}/approve`, { token });
+    assert.equal(approved.status, 'READY');
+  }
+  await expectOk('DELETE', `/api/quizzes/${quizId}`, { token });
+  step(`generated a ${count}-Question Draft${count >= 5 ? ', approved it' : ''}, and deleted it`);
+}
+
 /** Pushed events expected, and how many AppSync dropped (it's at-most-once delivery). */
 let expected = 0;
 let lost = 0;
@@ -260,6 +307,8 @@ try {
     'Game missing from the History list',
   );
   step('History recorded the Game as played');
+
+  await smokeGeneration(host.idToken);
 
   const active = await expectOk('GET', '/api/games/active', { token: host.idToken });
   assert.equal(active.gameId, null, "the Host's active-Game slot should be free");
