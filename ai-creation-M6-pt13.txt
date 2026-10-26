@@ -1,0 +1,142 @@
+BUILDING A QUIZ APP WITH CLAUDE CODE: PART 13 (M5 DEFERRED, M6 PLANNED)
+=======================================================================
+
+This continues ai-creation-M4-pt12.txt. It covers the same Claude Code
+session, from the commit that added part 12 up to this file.
+
+  Tool:   Claude Code (CLI), model Claude Opus 5.5
+  Date:   2026-10-26
+  Starts at:  commit 105d9c1 (M4, plus part 12)
+  Ends at:    the commit that adds this file
+
+How to read this:
+  USER    is what the developer typed, verbatim.
+  CLAUDE  is Claude's reply, shortened where it was long.
+  [ ... ] marks an action Claude took with its tools. These summarise the
+          action; they are not the raw tool output.
+
+
+------------------------------------------------------------------------------
+1. M4 GOES LIVE
+------------------------------------------------------------------------------
+
+[The developer pushed M4. The pipeline deployed it to dev and the smoke
+ test passed, including the new check that the real Comprehend path refuses
+ an abusive Nickname.]
+
+[Claude checked the sweeper's CloudWatch logs. Its first hourly run logged
+ "abandoned 0 idle Games", which was expected: nothing had been idle for
+ 24 hours yet.]
+
+CLAUDE:
+The sweeper is running on schedule. It can't be checked end to end until
+a Game has been idle for a full day, so I offered to confirm a real
+abandonment later.
+
+Also noted: the repository contract's test Games are dated with a fixed
+timestamp in 2027, so they'll sit in the dev table and won't be swept
+until then. That's harmless, but worth knowing.
+
+
+------------------------------------------------------------------------------
+2. M5, ASKED AND THEN DEFERRED
+------------------------------------------------------------------------------
+
+[Claude set out the decisions production needs before any building:]
+
+CLAUDE:
+Q1. Which AWS account is prod?
+Q2. Which email address should the alarms go to?
+Q3. Deploy prod on a v* tag, behind an approval on a "prod" GitHub
+    Environment?
+Q4. Run a smoke test against prod, with its own test Host?
+Q5. A US$20/month budget alert, and Nova for prod as well?
+
+USER:
+Skip M5 for now.
+
+[Claude left the questions open in the plan, unanswered.]
+
+
+------------------------------------------------------------------------------
+3. A CUSTOM DOMAIN
+------------------------------------------------------------------------------
+
+USER:
+Create M6 in the plan to allow for a domain name and Route 53 hosted zone
+to be passed-in as environment-specific parameters to the cloudformation
+template. These should be used to set the website domainname, api
+domainname and required ACMs for the deployment. The domain and hosted
+zone already exist; they are trivolt.app (allow apex or with www. as
+prefix for the website) and hosted zone id <hosted-zone-id>.
+
+[Before designing anything, Claude made read-only checks of the hosted
+ zone. It was in the dev account, which matters: records can be created
+ from the same account's stacks without any cross-account set-up.]
+
+[The zone already contained an NS record delegating dev.trivolt.app.
+ Claude followed it and found a second hosted zone, dev.trivolt.app, in
+ the same account. Its name servers matched the delegation, and it was
+ empty.]
+
+CLAUDE:
+The dev.trivolt.app zone is correctly delegated and empty. That fits a
+per-environment layout: dev on dev.trivolt.app, prod on the apex.
+
+[Claude wrote M6 into docs/PLAN.md:]
+  - Per-environment parameters (DomainName, HostedZoneId) in
+    infra/params/{env}.json, passed explicitly on every deploy. That
+    avoids an earlier lesson: "aws cloudformation deploy" quietly keeps a
+    parameter's previous value.
+  - An empty DomainName turns every domain resource off, so a new
+    environment can deploy before it has a domain.
+  - The website on {DomainName}, with www.{DomainName} redirected to it
+    with a 301 by the existing CloudFront Function, so there is one
+    canonical address.
+  - The API on api.{DomainName}, an API Gateway custom domain. CloudFront
+    still routes /api/* to it, so the web app stays same-origin and needs
+    no CORS. The earlier decision D4 holds.
+  - Certificates validated through DNS, with CloudFormation writing the
+    validation records itself. CloudFront only accepts certificates from
+    us-east-1, so the website's certificate gets its own small stack
+    there. Stack exports can't cross Regions, so the pipeline passes its
+    ARN along. The API's certificate stays in ap-southeast-2.
+  - The bootstrap role needs new permissions, with Route 53 changes
+    limited to each environment's own zone. The developer redeploys the
+    bootstrap stack themselves, as before.
+  - An open question handed to M5: if prod goes into a different account,
+    the apex zone has to move, or prod gets its own delegated zone.
+  - D5 ("no custom domain") is marked as replaced by M6.
+
+
+------------------------------------------------------------------------------
+4. THIS FILE
+------------------------------------------------------------------------------
+
+USER:
+Now write a file ./ai-creation-M6-pt13.txt which describes steps done
+since ./ai-creation-m4-pt12.txt. Then commit changes
+
+[Claude wrote this file and committed it, together with the plan.]
+
+
+------------------------------------------------------------------------------
+WHERE THINGS STAND
+------------------------------------------------------------------------------
+
+M0-M4 are deployed to dev, and the smoke tests pass. M6 is planned, but
+not built yet. M5 (production) is deferred, with its questions still open.
+
+Observations worth blogging about:
+  - Claude looked before it designed. A two-minute read-only check found
+    an existing, delegated dev subdomain, and that settled the
+    per-environment layout without needing to ask.
+  - It checked which account owned the zone, because a cross-account
+    zone would have changed the whole design.
+  - Platform constraints shaped the plan: CloudFront's certificates come
+    only from us-east-1, and exports can't cross Regions. They were
+    designed for up front, not discovered in a failed deploy.
+  - A lesson from an earlier milestone (stale parameter values) became a
+    rule in the new plan.
+  - Deferring a milestone was easy and explicit. Its open questions were
+    kept rather than lost.
