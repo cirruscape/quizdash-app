@@ -13,7 +13,7 @@ import { sampleQuiz } from './lib/sample-quiz.js';
 
 const foundation = await stackOutputs('foundation');
 const api = await stackOutputs('api');
-const apiUrl = api.ApiUrl as string;
+const apiUrl = api.PublicApiUrl as string;
 const [httpDomain, realtimeDomain] = [
   api.EventsHttpDomain as string,
   api.EventsRealtimeDomain as string,

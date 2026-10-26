@@ -1,0 +1,38 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Quiz App certificates (PLAN M6): the website's certificate, for DomainName and
+  www.{DomainName}. CloudFront only accepts certificates from us-east-1, so this stack is
+  deployed there, and only for an environment with a domain. Stack name: quizapp-{env}-certs.
+
+Parameters:
+  Env:
+    Type: String
+    AllowedValues: [dev, prod]
+  DomainName:
+    Type: String
+    Description: The site's canonical domain, e.g. trivolt.app.
+    MinLength: 1
+  HostedZoneId:
+    Type: String
+    Description: The Route 53 hosted zone for DomainName. CloudFormation adds the validation records.
+    MinLength: 1
+
+Resources:
+  SiteCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      SubjectAlternativeNames: [!Sub 'www.${DomainName}']
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+        - DomainName: !Sub www.${DomainName}
+          HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - Key: Env
+          Value: !Ref Env
+
+Outputs:
+  SiteCertificateArn:
+    Value: !Ref SiteCertificate

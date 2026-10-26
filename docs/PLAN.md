@@ -440,6 +440,11 @@ Each milestone lists what gets built, then **Done when**, the condition for call
 
 Replaces D5. Each environment gets its own domain, passed into the templates as parameters.
 
+- **Status (2026-10-26): built, not yet deployed.** Changes made while building it:
+  - **No bootstrap change.** The deploy role only drives CloudFormation, with `Resource: '*'`, which already covers us-east-1. The resources are created by `CfnExecutionRole`, which can already create them.
+  - **CloudFront still reaches the API on its execute-api domain.** The web stack imports `ApiDomain`, and CloudFormation won't change an export while it's imported. `api.{DomainName}` serves direct callers, and the API smoke test now uses it, through the api stack's new `PublicApiUrl` output.
+  - The www redirect lives in the existing viewer-request function, which is now tested (`infra/web.test.ts`) by running the code taken from the template.
+
 - **Per-environment parameters,** in `infra/params/{env}.json`. The deploy job passes every value explicitly on every deploy, because `aws cloudformation deploy` otherwise keeps a parameter's previous value:
 
   | Environment | `DomainName`      | `HostedZoneId`          | Notes                                                     |
@@ -451,7 +456,7 @@ Replaces D5. Each environment gets its own domain, passed into the templates as 
 
 - **Names, derived from `DomainName`, the same in every environment:**
   - **Website:** `{DomainName}` is canonical. `www.{DomainName}` is also served, and the existing viewer-request CloudFront Function redirects it to the canonical name with a 301. That gives one origin for the SPA and for Cognito's local token storage.
-  - **API:** `api.{DomainName}`, an API Gateway custom domain mapped to the HTTP API with its paths unchanged. CloudFront's `/api/*` behaviour uses it as its origin, so the SPA stays same-origin, D4 holds, and no CORS is needed. The smoke test and scripts can also call it directly.
+  - **API:** `api.{DomainName}`, an API Gateway custom domain mapped to the HTTP API with its paths unchanged, so routes keep their `/api` prefix. The SPA still calls `/api/*` through CloudFront, on the same origin, so D4 holds and no CORS is needed. The smoke test and scripts call `api.{DomainName}` directly.
 - **Certificates (ACM, DNS-validated in the hosted zone, so CloudFormation creates the validation records itself):**
   - **Website:** CloudFront only accepts certificates from **us-east-1**. A new stack, `quizapp-{env}-certs`, is deployed to us-east-1 with one certificate for `{DomainName}` plus `www.{DomainName}`. Exports can't cross Regions, so the deploy job reads the certificate ARN from that stack's outputs and passes it to the web stack as a parameter.
   - **API:** a regional certificate for `api.{DomainName}` in ap-southeast-2, created in the api stack next to the custom domain.
@@ -460,14 +465,17 @@ Replaces D5. Each environment gets its own domain, passed into the templates as 
   - Cognito: sign-in uses SRP with no hosted UI, so there are no callback URLs to update.
   - `config.json`: the API is still at the relative `/api`.
   - The AppSync Events endpoint stays on its default domain. Custom domains for Events APIs aren't in scope.
-- **Pipeline:** a new `certs` job before `web`, running in us-east-1. The smoke test and the web job's output URL switch to `https://{DomainName}`.
-- **Bootstrap (the user redeploys it):** the deploy role needs ACM in us-east-1 and ap-southeast-2, API Gateway domain names and mappings, `cloudfront` alias updates, and `route53:ChangeResourceRecordSets` and `GetChange`, scoped to the environment's own hosted zone ID.
+- **Pipeline:**
+  - a new `certs` job, running in us-east-1 in parallel with the others; it passes the certificate's ARN to `web` as a job output;
+  - the web job prints `https://{DomainName}`, then checks the site and the www redirect;
+  - the API smoke test runs against `https://api.{DomainName}`.
+- **Bootstrap:** no change needed (see Status).
 - **Prod's account:** both zones are in the dev account (`587736032611`). If prod goes into a different account, either the `trivolt.app` zone moves there, or prod gets its own delegated zone. Decide that in M5.
 - **Done when:** in dev:
   - `https://dev.trivolt.app` serves the app with a valid certificate;
   - `https://www.dev.trivolt.app` redirects to it with a 301;
-  - `https://api.dev.trivolt.app/health` answers;
-  - the smoke test passes against `https://dev.trivolt.app`;
+  - `https://api.dev.trivolt.app/api/health` answers;
+  - the smoke test passes against `https://api.dev.trivolt.app`;
   - a deploy with an unchanged params file shows no domain changes;
   - deploying with an empty `DomainName` still validates and creates no domain resources (checked with cfn-lint and a change set).
 

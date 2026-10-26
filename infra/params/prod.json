@@ -1,1 +1,5 @@
-[{ "ParameterKey": "Env", "ParameterValue": "prod" }]
+{
+  "Env": "prod",
+  "DomainName": "trivolt.app",
+  "HostedZoneId": "Z02932561X9QFU5CAHWB5"
+}

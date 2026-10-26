@@ -1,15 +1,32 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  Quiz App web (PLAN §9; D4, D5): a private S3 bucket for the SPA behind CloudFront, which also
-  routes /api/* to the HTTP API (same origin, no CORS). Stack name: quizapp-{env}-web.
+  Quiz App web (PLAN §9, M6; D4): a private S3 bucket for the SPA behind CloudFront, which also
+  routes /api/* to the HTTP API (same origin, no CORS). With a DomainName, the site is served on
+  it and on www.{DomainName}, which redirects to it. Stack name: quizapp-{env}-web.
 
 Parameters:
   Env:
     Type: String
     AllowedValues: [dev, prod]
+  DomainName:
+    Type: String
+    Default: ''
+    Description: The site's canonical domain, e.g. trivolt.app. Empty for the CloudFront domain only.
+  HostedZoneId:
+    Type: String
+    Default: ''
+    Description: The Route 53 hosted zone for DomainName.
+  CertificateArn:
+    Type: String
+    Default: ''
+    Description: >-
+      The us-east-1 certificate for DomainName and www.{DomainName}, from the quizapp-{env}-certs
+      stack. Exports can't cross Regions, so the deploy job passes it in.
+    AllowedPattern: '(arn:aws:acm:us-east-1:\d{12}:certificate/.+)?'
 
 Conditions:
   IsProd: !Equals [!Ref Env, prod]
+  HasDomain: !Not [!Equals [!Ref DomainName, '']]
 
 Resources:
   SiteBucket:
@@ -54,29 +71,60 @@ Resources:
         SigningProtocol: sigv4
 
   # App routes (e.g. /play/game, /host/games/123) all serve index.html. A function, rather than
-  # CloudFront custom error pages, so the API's real 404s stay JSON.
+  # CloudFront custom error pages, so the API's real 404s stay JSON. It also redirects
+  # www.{DomainName} to the canonical domain, so the app has one origin (and one token store).
+  # Tested by infra/web.test.ts.
   SpaRewriteFunction:
     Type: AWS::CloudFront::Function
     Properties:
       Name: !Sub quizapp-${Env}-spa-rewrite
       AutoPublish: true
       FunctionConfig:
-        Comment: Serve index.html for app routes (paths without a file extension).
+        Comment: Redirect www to the canonical domain; serve index.html for app routes.
         Runtime: cloudfront-js-2.0
-      FunctionCode: |
+      FunctionCode: !Sub |
         function handler(event) {
           var request = event.request;
+          var host = request.headers.host ? request.headers.host.value : '';
+          if ('${DomainName}' !== '' && host === 'www.${DomainName}') {
+            var query = Object.keys(request.querystring).map(function (key) {
+              var param = request.querystring[key];
+              return (param.multiValue || [param]).map(function (v) {
+                return key + '=' + v.value;
+              }).join('&');
+            }).join('&');
+            var location = 'https://${DomainName}' + request.uri + (query ? '?' + query : '');
+            return {
+              statusCode: 301,
+              statusDescription: 'Moved Permanently',
+              headers: { location: { value: location } },
+            };
+          }
           if (request.uri.indexOf('.') === -1) request.uri = '/index.html';
           return request;
         }
 
   Distribution:
     Type: AWS::CloudFront::Distribution
+    Metadata:
+      # cfn-lint resolves CertificateArn to its empty default, but it's only used under HasDomain.
+      cfn-lint: { config: { ignore_checks: [W1030] } }
     Properties:
       DistributionConfig:
         Enabled: true
         Comment: !Sub Quiz App ${Env}
         HttpVersion: http2and3
+        IPV6Enabled: true
+        Aliases: !If
+          - HasDomain
+          - [!Ref DomainName, !Sub 'www.${DomainName}']
+          - !Ref AWS::NoValue
+        ViewerCertificate: !If
+          - HasDomain
+          - AcmCertificateArn: !Ref CertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - !Ref AWS::NoValue
         PriceClass: !If [IsProd, PriceClass_All, PriceClass_100]
         DefaultRootObject: index.html
         Origins:
@@ -112,12 +160,35 @@ Resources:
             ViewerProtocolPolicy: redirect-to-https
             CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # Managed-CachingDisabled
 
+  # Both names, IPv4 and IPv6, alias the distribution. Z2FDTNDATAQYW2 is CloudFront's fixed zone.
+  SiteRecords:
+    Type: AWS::Route53::RecordSetGroup
+    Condition: HasDomain
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      RecordSets:
+        - Name: !Ref DomainName
+          Type: A
+          AliasTarget: { DNSName: !GetAtt Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
+        - Name: !Ref DomainName
+          Type: AAAA
+          AliasTarget: { DNSName: !GetAtt Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
+        - Name: !Sub www.${DomainName}
+          Type: A
+          AliasTarget: { DNSName: !GetAtt Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
+        - Name: !Sub www.${DomainName}
+          Type: AAAA
+          AliasTarget: { DNSName: !GetAtt Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
+
 Outputs:
   BucketName:
     Value: !Ref SiteBucket
   DistributionId:
     Value: !Ref Distribution
   Url:
-    Value: !Sub https://${Distribution.DomainName}
+    Value: !If
+      - HasDomain
+      - !Sub https://${DomainName}
+      - !Sub https://${Distribution.DomainName}
     Export:
       Name: !Sub quizapp-${Env}-WebUrl

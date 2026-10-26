@@ -60,7 +60,10 @@ Every push to `main` runs `.github/workflows/deploy.yml`, which deploys to dev:
 4. **agent**: the `quizapp-dev-agent` stack, then a smoke test that invokes the agent and expects "Canberra" in the reply (Spike A).
 5. **api**: the `quizapp-dev-api` stack (HTTP API, the API Lambda, AppSync Events). This runs in parallel with steps 3 and 4.
 6. **smoke**: plays a whole Game against dev over HTTP and AppSync Events.
-7. **web**: the `quizapp-dev-web` stack (S3 and CloudFront), then the app itself. The job prints the app's URL.
+7. **certs**: the `quizapp-dev-certs` stack in **us-east-1**, the website's certificate (CloudFront only accepts certificates from there). This runs in parallel with the others.
+8. **web**: the `quizapp-dev-web` stack (S3 and CloudFront), then the app itself. The job prints the app's URL, then checks the site and the `www.` redirect.
+
+Each environment's domain and Route 53 hosted zone are in `infra/params/{env}.json`. Dev is served at `https://dev.trivolt.app`, with `www.dev.trivolt.app` redirecting to it, and its API also at `https://api.dev.trivolt.app`. Prod gets `trivolt.app`. An empty `DomainName` deploys without a custom domain.
 
 You can also run it from the Actions tab (**Deploy → Run workflow**).
 
@@ -111,8 +114,10 @@ sam deploy --profile quizdash --region ap-southeast-2 \
   --template-file infra/api.yaml \
   --stack-name quizapp-dev-api \
   --resolve-s3 --capabilities CAPABILITY_IAM \
-  --parameter-overrides Env=dev
+  --parameter-overrides Env=dev DomainName=dev.trivolt.app HostedZoneId=Z00841461JB6KK1GON7XJ
 ```
+
+Pass the domain values from `infra/params/dev.json` on every manual deploy of the api and web stacks, so the stack never keeps stale values or drops the custom domain.
 
 ### Seeding and the smoke test
 

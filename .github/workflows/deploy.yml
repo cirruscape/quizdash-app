@@ -4,7 +4,11 @@ name: Deploy
 #   CI -> foundation -> agent image -> agent stack + generation smoke test
 #                                    -> api stack -> API smoke test
 #                             -> web stack + app
+#      -> certs (us-east-1)  ---------^
 # Prod deployment (tags, approvals) arrives in M5.
+#
+# The environment's domain comes from infra/params/{env}.json (M6). Every deploy passes it
+# explicitly, because `aws cloudformation deploy` otherwise keeps a parameter's previous value.
 #
 # Requires a GitHub Environment named "dev" with these variables, taken from the outputs of
 # the quizapp-dev-bootstrap stack (see README):
@@ -25,6 +29,7 @@ concurrency:
 env:
   AWS_REGION: ap-southeast-2
   APP_ENV: dev
+  PARAMS: infra/params/dev.json
 
 jobs:
   ci:
@@ -54,6 +59,47 @@ jobs:
             --role-arn "${{ vars.CFN_EXECUTION_ROLE_ARN }}" \
             --parameter-overrides Env="${APP_ENV}" \
             --no-fail-on-empty-changeset
+
+  # CloudFront only accepts certificates from us-east-1, and exports can't cross Regions, so the
+  # certificate's ARN reaches the web job as a job output.
+  certs:
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      certificate-arn: ${{ steps.deploy.outputs.arn }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+          # GitHub drops a job output containing a masked value, and the ARN holds the account ID.
+          mask-aws-account-id: false
+
+      - name: Deploy certs stack (us-east-1)
+        id: deploy
+        run: |
+          DOMAIN=$(jq -r '.DomainName // ""' "$PARAMS")
+          if [ -z "$DOMAIN" ]; then
+            echo "No DomainName in $PARAMS; the site uses its CloudFront domain."
+            echo "arn=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          aws cloudformation deploy \
+            --stack-name "quizapp-${APP_ENV}-certs" \
+            --template-file infra/certs.yaml \
+            --role-arn "${{ vars.CFN_EXECUTION_ROLE_ARN }}" \
+            --parameter-overrides Env="${APP_ENV}" DomainName="$DOMAIN" \
+              HostedZoneId="$(jq -r .HostedZoneId "$PARAMS")" \
+            --no-fail-on-empty-changeset
+          ARN=$(aws cloudformation describe-stacks --stack-name "quizapp-${APP_ENV}-certs" \
+            --query "Stacks[0].Outputs[?OutputKey=='SiteCertificateArn'].OutputValue" --output text)
+          echo "arn=$ARN" >> "$GITHUB_OUTPUT"
 
   agent-image:
     needs: foundation
@@ -193,12 +239,14 @@ jobs:
             --role-arn "${{ vars.CFN_EXECUTION_ROLE_ARN }}" \
             --capabilities CAPABILITY_IAM \
             --parameter-overrides Env="${APP_ENV}" \
+              DomainName="$(jq -r '.DomainName // ""' "$PARAMS")" \
+              HostedZoneId="$(jq -r '.HostedZoneId // ""' "$PARAMS")" \
             --region "${AWS_REGION}" \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset
 
   web:
-    needs: api
+    needs: [api, certs]
     runs-on: ubuntu-latest
     environment: dev
     permissions:
@@ -229,6 +277,9 @@ jobs:
             --template-file infra/web.yaml \
             --role-arn "${{ vars.CFN_EXECUTION_ROLE_ARN }}" \
             --parameter-overrides Env="${APP_ENV}" \
+              DomainName="$(jq -r '.DomainName // ""' "$PARAMS")" \
+              HostedZoneId="$(jq -r '.HostedZoneId // ""' "$PARAMS")" \
+              CertificateArn="${{ needs.certs.outputs.certificate-arn }}" \
             --no-fail-on-empty-changeset
 
       - name: Publish the app
@@ -253,6 +304,17 @@ jobs:
           aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" \
             --paths /index.html /config.json >/dev/null
           echo "App: $(out web Url)"
+
+      - name: Check the domain (the site, and www redirecting to it)
+        run: |
+          DOMAIN=$(jq -r '.DomainName // ""' "$PARAMS")
+          [ -z "$DOMAIN" ] && exit 0
+          # New DNS records can take a minute to resolve everywhere.
+          curl -fsS -o /dev/null --retry 6 --retry-all-errors --retry-delay 10 "https://$DOMAIN/"
+          GOT=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' --retry 6 --retry-all-errors \
+            --retry-delay 10 "https://www.$DOMAIN/join?code=ABC234")
+          echo "www: $GOT"
+          [ "$GOT" = "301 https://$DOMAIN/join?code=ABC234" ]
 
   smoke:
     needs: api

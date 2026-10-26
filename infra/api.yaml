@@ -3,13 +3,25 @@ Transform: AWS::Serverless-2016-10-31
 Description: >-
   Quiz App API (PLAN §5, §6, §9): the HTTP API with a Cognito JWT authoriser for Host routes,
   the API Lambda (all routes, one internal router), and AppSync Events for live play, with its
-  Lambda authoriser. Stack name: quizapp-{env}-api.
+  Lambda authoriser. With a DomainName, the HTTP API is also served on api.{DomainName} (M6).
+  Stack name: quizapp-{env}-api.
   Bundle first with: pnpm --filter @quizapp/api bundle
 
 Parameters:
   Env:
     Type: String
     AllowedValues: [dev, prod]
+  DomainName:
+    Type: String
+    Default: ''
+    Description: The environment's domain, e.g. trivolt.app. Empty for no custom API domain.
+  HostedZoneId:
+    Type: String
+    Default: ''
+    Description: The Route 53 hosted zone for DomainName.
+
+Conditions:
+  HasDomain: !Not [!Equals [!Ref DomainName, '']]
 
 Globals:
   Function:
@@ -221,7 +233,64 @@ Resources:
       ApiId: !GetAtt EventsApi.ApiId
       Name: game
 
+  # ---------------------------------------------------------------- api.{DomainName}
+  # CloudFront still reaches the API on its execute-api domain (the web stack imports ApiDomain,
+  # and an imported export can't change). This name is for direct callers: scripts and the smoke
+  # test. The routes keep their /api prefix, so the mapping has no base path.
+  ApiCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasDomain
+    Properties:
+      DomainName: !Sub api.${DomainName}
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Sub api.${DomainName}
+          HostedZoneId: !Ref HostedZoneId
+
+  ApiCustomDomain:
+    Type: AWS::ApiGatewayV2::DomainName
+    Condition: HasDomain
+    Properties:
+      DomainName: !Sub api.${DomainName}
+      DomainNameConfigurations:
+        - CertificateArn: !Ref ApiCertificate
+          EndpointType: REGIONAL
+          SecurityPolicy: TLS_1_2
+
+  ApiCustomDomainMapping:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    Condition: HasDomain
+    # SAM creates the $default stage under this logical ID.
+    DependsOn: HttpApiApiGatewayDefaultStage
+    Properties:
+      DomainName: !Ref ApiCustomDomain
+      ApiId: !Ref HttpApi
+      Stage: $default
+
+  ApiRecords:
+    Type: AWS::Route53::RecordSetGroup
+    Condition: HasDomain
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      RecordSets:
+        - Name: !Sub api.${DomainName}
+          Type: A
+          AliasTarget:
+            DNSName: !GetAtt ApiCustomDomain.RegionalDomainName
+            HostedZoneId: !GetAtt ApiCustomDomain.RegionalHostedZoneId
+        - Name: !Sub api.${DomainName}
+          Type: AAAA
+          AliasTarget:
+            DNSName: !GetAtt ApiCustomDomain.RegionalDomainName
+            HostedZoneId: !GetAtt ApiCustomDomain.RegionalHostedZoneId
+
 Outputs:
+  PublicApiUrl:
+    Description: The URL direct callers use, api.{DomainName} when there is one.
+    Value: !If
+      - HasDomain
+      - !Sub https://api.${DomainName}
+      - !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
   ApiUrl:
     Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
     Export:
