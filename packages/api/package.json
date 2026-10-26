@@ -27,9 +27,11 @@
   "dependencies": {
     "@aws-crypto/sha256-js": "^5.2.0",
     "@aws-sdk/client-bedrock-agentcore": "^3.1156.0",
+    "@aws-sdk/client-comprehend": "^3.1156.0",
     "@aws-sdk/client-dynamodb": "^3.1156.0",
     "@aws-sdk/client-lambda": "^3.1156.0",
     "@aws-sdk/client-secrets-manager": "^3.1156.0",
+    "@aws-sdk/client-ssm": "^3.1156.0",
     "@aws-sdk/credential-provider-node": "^3.972.88",
     "@aws-sdk/lib-dynamodb": "^3.1156.0",
     "@quizapp/contracts": "workspace:*",

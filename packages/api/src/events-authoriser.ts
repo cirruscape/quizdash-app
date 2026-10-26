@@ -2,7 +2,8 @@
 // publishing is IAM-only, for the backend.
 //   Players (Player token): may connect, and subscribe only to /game/{theirGame}/players.
 //   Hosts (Cognito token):  may connect, and subscribe to both channels of Games they own.
-// Not yet handled: the removed-Player check (M4).
+//   Removed Players (FR-5.6): refused. AppSync can't cut off a subscription already open, but a
+//   removed device's next snapshot returns PLAYER_REMOVED, so it stops.
 import { CognitoJwtVerifier } from 'aws-jwt-verify';
 import { playerTokenKey } from './aws/signing-key.js';
 import { verifyPlayerToken } from './player-token.js';
@@ -35,6 +36,8 @@ export interface AuthoriserDeps {
   verifyHost: (token: string) => Promise<string | null>;
   /** The Host who owns a Game, or null if there's no such Game. */
   gameOwner: (gameId: string) => Promise<string | null>;
+  /** True if the Host has removed this Player from the Game. */
+  playerRemoved: (gameId: string, playerId: string) => Promise<boolean>;
 }
 
 /** How long AppSync may cache an allow decision. Short, so Player removal takes effect quickly. */
@@ -58,6 +61,7 @@ export async function authorise(
 
   const player = verifyPlayerToken(event.authorizationToken, deps.playerKey, deps.nowSeconds);
   if (player) {
+    if (await deps.playerRemoved(player.gameId, player.playerId)) return DENY;
     const allow = {
       isAuthorized: true,
       ttlOverride: ALLOW_TTL_SECONDS,
@@ -87,6 +91,11 @@ function normaliseChannel(channel: string | null | undefined): string | null {
 let hostVerifier: { verify(token: string): Promise<{ sub: string }> } | undefined;
 let repo: DynamoRepository | undefined;
 
+function games(): DynamoRepository {
+  repo ??= new DynamoRepository(process.env.TABLE_NAME as string);
+  return repo;
+}
+
 export const handler = async (event: EventsAuthoriserEvent): Promise<EventsAuthoriserResult> =>
   authorise(event, {
     playerKey: await playerTokenKey(),
@@ -103,8 +112,8 @@ export const handler = async (event: EventsAuthoriserEvent): Promise<EventsAutho
         return null; // invalid token, or Host auth not configured here
       }
     },
-    gameOwner: async (gameId) => {
-      repo ??= new DynamoRepository(process.env.TABLE_NAME as string);
-      return (await repo.getGame(gameId))?.game.hostId ?? null;
-    },
+    gameOwner: async (gameId) => (await games().getGame(gameId))?.game.hostId ?? null,
+    playerRemoved: async (gameId, playerId) =>
+      (await games().getGame(gameId))?.game.players.find((p) => p.playerId === playerId)
+        ?.removed === true,
   });

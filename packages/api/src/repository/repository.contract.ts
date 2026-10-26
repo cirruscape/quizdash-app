@@ -2,7 +2,7 @@
 // every test run, and against DynamoDB on demand, so the fake used by the service tests stays
 // faithful to the real thing.
 import { createGame, type Game, type Quiz } from '@quizapp/domain';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConflictError, type GameRepository, type HistoryRecord } from './repository.js';
 
 export const T0 = 1_800_000_000_000;
@@ -173,6 +173,24 @@ export function repositoryContract(name: string, makeRepository: () => GameRepos
       expect(await repo.useGeneration(hostId, '2026-10-26', 3, T0)).toBe(false);
       expect(await repo.useGeneration(hostId, '2026-10-27', 3, T0)).toBe(true); // a new day
       expect(await repo.useGeneration(other, '2026-10-26', 3, T0)).toBe(true); // a different Host
+    });
+
+    it('finds unfinished Games last active at or before a cutoff, for the sweeper', async () => {
+      const idle = { ...sampleGame(), lastActivityAt: T0 - 1_000 }; // exactly at the cutoff
+      const active = { ...sampleGame(), lastActivityAt: T0 };
+      const finished = { ...sampleGame(), lastActivityAt: T0 - 2_000, phase: 'FINISHED' as const };
+      for (const g of [idle, active, finished]) await repo.createGame(g);
+
+      // The index behind this is eventually consistent, and a real table holds other Games too.
+      await vi.waitFor(
+        async () => {
+          const found = await repo.listIdleGameIds(T0 - 1_000);
+          expect(found).toContain(idle.gameId);
+          expect(found).not.toContain(active.gameId);
+          expect(found).not.toContain(finished.gameId);
+        },
+        { timeout: 10_000, interval: 500 },
+      );
     });
   });
 }

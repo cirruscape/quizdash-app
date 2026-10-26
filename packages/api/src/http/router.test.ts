@@ -17,6 +17,8 @@ async function setup() {
     random: Math.random,
     issuePlayerToken: ({ gameId, playerId }) => `token.${gameId}.${playerId}`,
     publish: async () => {},
+    isBlocked: () => false,
+    isToxic: async () => false,
   });
   // Stands in for verifyPlayerToken: accepts exactly the tokens issued above.
   const verifyPlayer = (token: string) => {

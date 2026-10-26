@@ -53,6 +53,8 @@ Resources:
           PLAYER_TOKEN_SECRET_ARN: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-PlayerTokenSecretArn' }
           EVENTS_HTTP_DOMAIN: !GetAtt EventsApi.Dns.Http
           WORKER_FUNCTION_NAME: !Ref WorkerFunction
+          TOXICITY_THRESHOLD_PARAMETER:
+            { 'Fn::ImportValue': !Sub 'quizapp-${Env}-ToxicityThresholdParameterName' }
       Policies:
         - LambdaInvokePolicy:
             FunctionName: !Ref WorkerFunction
@@ -61,6 +63,17 @@ Resources:
         - AWSSecretsManagerGetSecretValuePolicy:
             SecretArn: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-PlayerTokenSecretArn' }
         - Statement:
+            # Nickname moderation (FR-5.3). DetectToxicContent has no resource-level permissions.
+            - Sid: CheckNicknames
+              Effect: Allow
+              Action: comprehend:DetectToxicContent
+              Resource: '*'
+            - Sid: ReadToxicityThreshold
+              Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub
+                - arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${Name}
+                - Name: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-ToxicityThresholdParameterName' }
             - Sid: PublishGameEvents
               Effect: Allow
               Action: appsync:EventPublish
@@ -115,6 +128,32 @@ Resources:
                 - !Sub
                   - '${RuntimeArn}/runtime-endpoint/*'
                   - RuntimeArn: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-AgentRuntimeArn' }
+
+  # Finishes Games idle for 24 hours, hourly (FR-8.4, D8).
+  SweeperFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../packages/api/dist-lambda/sweeper
+      MemorySize: 256
+      Timeout: 120
+      ReservedConcurrentExecutions: 1
+      Environment:
+        Variables:
+          TABLE_NAME: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-TableName' }
+          EVENTS_HTTP_DOMAIN: !GetAtt EventsApi.Dns.Http
+      Events:
+        Hourly:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: rate(1 hour)
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: { 'Fn::ImportValue': !Sub 'quizapp-${Env}-TableName' }
+        - Statement:
+            - Sid: PublishGameEvents
+              Effect: Allow
+              Action: appsync:EventPublish
+              Resource: !Sub arn:aws:appsync:${AWS::Region}:${AWS::AccountId}:apis/${EventsApi.ApiId}/channelNamespace/game
 
   HealthFunction:
     Type: AWS::Serverless::Function

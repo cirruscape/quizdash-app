@@ -1,0 +1,187 @@
+BUILDING A QUIZ APP WITH CLAUDE CODE: PART 12 (M4, MODERATION AND THE SWEEPER)
+==============================================================================
+
+This continues ai-creation-M3-pt11.txt. It covers the same Claude Code
+session, from the commit that added part 11 up to this file.
+
+  Tool:   Claude Code (CLI), model Claude Opus 5.5
+  Date:   2026-10-26
+  Starts at:  commit 094d813 (M3, plus part 11)
+  Ends at:    the commit that adds this file
+
+How to read this:
+  USER    is what the developer typed, verbatim.
+  CLAUDE  is Claude's reply, shortened where it was long.
+  [ ... ] marks an action Claude took with its tools. These summarise the
+          action; they are not the raw tool output.
+
+
+------------------------------------------------------------------------------
+1. M3 GOES LIVE
+------------------------------------------------------------------------------
+
+USER:
+Pipeline is green, generation smoke test passed
+
+CLAUDE:
+The generation path is proven end to end in dev: the API takes the
+request, the worker Lambda starts in the background, the agent runs on
+AgentCore and calls Nova 2 Lite through Converse, the questions are
+generated, verified and validated in code, and the Draft is saved and
+approved, then deleted again.
+[A table of what's left: M4 (moderation, removed Players, the abandonment
+ sweeper) and M5 (production), plus the pending switch to Opus 5.5.]
+
+
+------------------------------------------------------------------------------
+2. DECISIONS FIRST
+------------------------------------------------------------------------------
+
+USER:
+Continue to M4
+
+CLAUDE:
+Q1. If Comprehend is unavailable or errors, what should joining do?
+    (a) Fail open: apply the blocklist, then let the Nickname through,
+        and log it. A Comprehend outage never stops a party from joining.
+    (b) Fail closed: refuse with "Couldn't check that nickname".
+    I recommend (a). The blocklist still catches the obvious cases, and
+    the Host can still remove a Player.
+Q2. The blocklist: normalise case, spaces and leetspeak, then match listed
+    words as substrings. That catches disguised words, at the cost of
+    occasional false positives, the "Scunthorpe problem".
+Q3. The seams: N1 the blocklist (pure); S1 the game service with
+    moderation faked; S3 the repository contract; the authoriser's tests.
+    The Comprehend adapter itself checked against the real service on
+    demand.
+
+USER:
+yes, go with Q1–Q3 as recommended
+
+
+------------------------------------------------------------------------------
+3. THE BLOCKLIST, AND A REAL NAME IT WOULD HAVE BLOCKED
+------------------------------------------------------------------------------
+
+[The matching was built test-first against made-up words, so the tests
+ checked the normalising rather than the list: leetspeak, symbols, spacing,
+ stretched letters. One test deliberately records the agreed trade-off,
+ that "prudent" contains "rude".]
+
+[Claude then wrote the real word list, with a guard test: common names and
+ words must pass. It chose words carefully, leaving out "ass" (in
+ "Cassie"), "cock" ("Hancock"), "arse" ("Arsenal") and "rape" ("grape"),
+ and leaving those to Comprehend.]
+
+[The guard test failed on its first run: "Shitij", a real given name,
+ contains "shit".]
+
+CLAUDE:
+The guard test caught a real false positive straight away. "Shitij" is a
+genuine given name, and it contains "shit". This is the Scunthorpe
+trade-off at its worst, blocking someone's actual name, which is the kind
+of mistake the guard test exists to catch. I'll drop "shit" from the list.
+Comprehend's profanity category still catches it.
+
+Lesson for the blog: the agreed trade-off (broad matching, rare false
+positives) was right in principle. But a test using real-world names
+showed where it would hurt real people, and the list was adjusted rather
+than the people.
+
+
+------------------------------------------------------------------------------
+4. COMPREHEND, REMOVED PLAYERS AND THE SWEEPER
+------------------------------------------------------------------------------
+
+[In the game service, red then green: a blocklisted Nickname is refused
+ without asking Comprehend; a flagged one is refused, and the check sees
+ the trimmed Nickname; if the check itself errors, the Player gets in. The
+ same generic refusal is used whatever the reason (FR-5.5).]
+
+[The Comprehend adapter rejects a Nickname if any category scores at or
+ above the threshold read from SSM. Claude ran its on-demand test against
+ the real service, but the deploying IAM user isn't allowed to call
+ Comprehend, just as with Bedrock. So Claude added a check to the smoke
+ test instead: in the Lobby, a join with an abusive Nickname must be
+ refused. The deployed environment verifies the real path.]
+
+[Removed Players: the real-time authoriser now refuses a removed Player's
+ token for new connections and subscriptions. Claude noted the platform's
+ limit: AppSync can't cut off a subscription already open, but the removed
+ device's next snapshot says "removed", so it stops.]
+
+[The abandonment sweeper, test-first:
+   - repository contract: find unfinished Games idle since a cutoff,
+     through the sparse index the table has had since M0. The test checks
+     membership rather than an exact list, because the index is
+     eventually consistent and the dev table holds Games from earlier
+     runs.
+   - service: Games idle 24 hours are abandoned through the normal path,
+     so History, released claims and the GAME_FINISHED event all happen
+     as usual; a Game with activity a minute before the sweep is
+     spared. ]
+
+[The service test then failed: zero Games abandoned, not one. The domain
+ treats exactly 24 hours idle as abandonable; the repository lookup used
+ "strictly before". The two layers disagreed about the boundary.]
+
+CLAUDE:
+The test caught a real boundary mismatch. I'll make the lookup inclusive,
+meaning "last active at or before", so it matches the domain.
+
+[The first attempt at that edit stopped partway, because prettier had
+ reflowed a line. Claude noticed that the DynamoDB contract run had only
+ passed because the boundary test hadn't yet been updated. It finished
+ both edits, and the contract then tested a Game idle exactly at the
+ cutoff, in memory and on real DynamoDB.]
+
+[The sweeper Lambda runs hourly on EventBridge Scheduler. It's built on
+ the same game service as the API.]
+
+CLAUDE:
+M4 is built. All of it was test-first, and it passes 229 tests, along with
+typecheck, lint, cfn-lint and SAM validate.
+Not verified yet:
+ - Real Comprehend: the deployed smoke test is the first real check.
+ - The sweeper in production: it can't be smoke-tested without waiting 24
+   hours. After deploy, its CloudWatch logs will show "abandoned N idle
+   Games" every hour.
+
+
+------------------------------------------------------------------------------
+5. THIS FILE
+------------------------------------------------------------------------------
+
+USER:
+Now write a file ./ai-creation-M4-pt12.txt which describes steps done
+since ./ai-creation-m3-pt11.txt. Then commit changes
+
+[Claude wrote this file and committed.]
+
+
+------------------------------------------------------------------------------
+WHERE THINGS STAND
+------------------------------------------------------------------------------
+
+M4 is built and committed, not yet deployed. Pushing it:
+  - deploys moderation; the smoke test checks the real Comprehend path
+  - deploys the removed-Player check in the real-time authoriser
+  - deploys the hourly sweeper
+No bootstrap change is needed.
+
+Next: M5, production: a prod environment (the account is still
+undecided), approval-gated deploys, alarms, a budget alert, and
+point-in-time recovery on the table.
+
+Observations worth blogging about:
+  - A test that used real-world data ("does this name list pass?") caught
+    a harm that the rule's own tests, which used made-up words, couldn't.
+  - Two layers disagreeing about an edge case (exactly 24 hours) is the
+    kind of bug that hides for months. Testing through the whole path,
+    service plus repository, found it on the first run.
+  - Claude noticed when a test passed for the wrong reason (the boundary
+    case hadn't been updated yet) and didn't count it as a pass.
+  - Fail-open was a deliberate, recorded product decision, not an
+    accident of error handling.
+  - Claude was explicit about what can't be tested quickly (a 24-hour
+    sweeper) and said how it would be checked instead.

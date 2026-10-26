@@ -7,6 +7,7 @@ const entries = {
   health: 'src/health.ts',
   http: 'src/lambda/http.ts',
   worker: 'src/lambda/worker.ts',
+  sweeper: 'src/lambda/sweeper.ts',
   'events-authoriser': 'src/events-authoriser.ts',
 };
 

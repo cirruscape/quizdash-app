@@ -70,6 +70,11 @@ export interface GameRepository {
   getActiveGameId(hostId: string): Promise<string | null>;
   /** Clears the claim only if it is still held by `gameId`. */
   releaseActiveGame(hostId: string, gameId: string): Promise<void>;
+  /**
+   * Unfinished Games last active at or before `cutoff` (FR-8.4). Inclusive, matching the domain,
+   * which treats exactly 24 hours idle as abandonable. May lag slightly behind recent writes.
+   */
+  listIdleGameIds(cutoff: number): Promise<string[]>;
 
   putHistory(record: HistoryRecord): Promise<void>;
   /** Newest first. */

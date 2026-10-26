@@ -10,6 +10,9 @@ import { DynamoRepository } from '../repository/dynamo-repository.js';
 import { createGameService } from '../service/game-service.js';
 import { createQuizService } from '../service/quiz-service.js';
 import { createJobStarter } from '../aws/quiz-jobs.js';
+import { createToxicityCheck } from '../aws/toxicity.js';
+import { BLOCKED_WORDS } from '../moderation/blocked-words.js';
+import { createBlocklist } from '../moderation/blocklist.js';
 
 /** How long a Player token stays valid (PLAN §5). */
 const PLAYER_TOKEN_TTL_SECONDS = 48 * 60 * 60;
@@ -19,6 +22,9 @@ const publish = createEventsPublisher(
   required('EVENTS_HTTP_DOMAIN'),
   process.env.AWS_REGION ?? 'ap-southeast-2',
 );
+
+const isBlocked = createBlocklist(BLOCKED_WORDS);
+const isToxic = createToxicityCheck(process.env.TOXICITY_THRESHOLD_PARAMETER);
 
 /** Generations per Host per day (FR-2.7). */
 const GENERATION_LIMIT = 20;
@@ -53,6 +59,8 @@ export const handler = async (
     issuePlayerToken: ({ gameId, playerId }) =>
       signPlayerToken({ gameId, playerId, exp: nowSeconds() + PLAYER_TOKEN_TTL_SECONDS }, key),
     publish,
+    isBlocked,
+    isToxic,
   });
 
   const hostId = event.requestContext.authorizer?.jwt?.claims?.sub;

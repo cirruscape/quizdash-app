@@ -109,6 +109,12 @@ export class MemoryRepository implements GameRepository {
     if (this.activeGames.get(hostId) === gameId) this.activeGames.delete(hostId);
   }
 
+  async listIdleGameIds(cutoff: number): Promise<string[]> {
+    return [...this.games.values()]
+      .filter(({ game }) => game.phase !== 'FINISHED' && game.lastActivityAt <= cutoff)
+      .map(({ game }) => game.gameId);
+  }
+
   async putHistory(record: HistoryRecord): Promise<void> {
     this.history.set(`${record.hostId}/${record.gameId}`, structuredClone(record));
   }

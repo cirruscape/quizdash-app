@@ -14,6 +14,8 @@ const deps: AuthoriserDeps = {
   verifyHost: async (t) => (t === HOST_TOKEN ? 'h1' : null),
   // Game g1 belongs to h1; g2 to someone else.
   gameOwner: async (gameId) => ({ g1: 'h1', g2: 'h2' })[gameId] ?? null,
+  // In Game g1, Player p9 has been removed by the Host.
+  playerRemoved: async (gameId, playerId) => gameId === 'g1' && playerId === 'p9',
 };
 
 function event(
@@ -98,5 +100,18 @@ describe('events authoriser: Hosts', () => {
       expect(await allowed(event('EVENT_SUBSCRIBE', channel, HOST_TOKEN))).toBe(false);
     }
     expect(await allowed(event('EVENT_PUBLISH', '/game/g1/host', HOST_TOKEN))).toBe(false);
+  });
+});
+
+describe('events authoriser: removed Players (FR-5.6)', () => {
+  const removedToken = signPlayerToken({ gameId: 'g1', playerId: 'p9', exp: NOW + 3600 }, KEY);
+
+  it("refuses a removed Player's token to connect or subscribe", async () => {
+    expect(await allowed(event('EVENT_CONNECT', null, removedToken))).toBe(false);
+    expect(await allowed(event('EVENT_SUBSCRIBE', '/game/g1/players', removedToken))).toBe(false);
+  });
+
+  it('still allows the other Players in that Game', async () => {
+    expect(await allowed(event('EVENT_SUBSCRIBE', '/game/g1/players'))).toBe(true);
   });
 });

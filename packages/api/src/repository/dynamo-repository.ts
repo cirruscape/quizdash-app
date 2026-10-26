@@ -204,6 +204,29 @@ export class DynamoRepository implements GameRepository {
     }
   }
 
+  async listIdleGameIds(cutoff: number): Promise<string[]> {
+    // GSI1 is sparse: only unfinished Games carry GSI1PK/GSI1SK (see gameItem).
+    const ids: string[] = [];
+    let ExclusiveStartKey: Record<string, unknown> | undefined;
+    do {
+      const res = await this.db.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          IndexName: 'GSI1',
+          KeyConditionExpression: 'GSI1PK = :unfinished AND GSI1SK <= :cutoff',
+          ExpressionAttributeValues: {
+            ':unfinished': 'UNFINISHED',
+            ':cutoff': activityKey(cutoff),
+          },
+          ExclusiveStartKey,
+        }),
+      );
+      for (const item of res.Items ?? []) ids.push(String(item.PK).replace(/^GAME#/, ''));
+      ExclusiveStartKey = res.LastEvaluatedKey;
+    } while (ExclusiveStartKey);
+    return ids;
+  }
+
   async putHistory(record: HistoryRecord): Promise<void> {
     await this.db.send(
       new PutCommand({
@@ -286,6 +309,11 @@ function gameItem(game: Game, version: number): Record<string, unknown> {
   const unfinished =
     game.phase === 'FINISHED'
       ? {}
-      : { GSI1PK: 'UNFINISHED', GSI1SK: String(game.lastActivityAt).padStart(15, '0') };
+      : { GSI1PK: 'UNFINISHED', GSI1SK: activityKey(game.lastActivityAt) };
   return { PK: `GAME#${game.gameId}`, SK: META, game, version, ...unfinished };
+}
+
+/** Fixed-width, so the index's string sort key orders by time. */
+function activityKey(at: number): string {
+  return String(at).padStart(15, '0');
 }

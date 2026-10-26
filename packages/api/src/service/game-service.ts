@@ -1,6 +1,7 @@
 // The game service (seam S1): one function per use case, orchestrating the domain's decide()
 // with storage, retries, Player tokens and event routing. HTTP lives in the handlers.
 import {
+  ABANDON_AFTER_MS,
   createGame as newGame,
   decide,
   generateJoinCode,
@@ -31,6 +32,10 @@ export interface ServiceDeps {
   random: () => number;
   issuePlayerToken: (claims: { gameId: string; playerId: string }) => string;
   publish: Publish;
+  /** The Nickname blocklist (FR-5.4). */
+  isBlocked: (nickname: string) => boolean;
+  /** The toxicity check (FR-5.3): Comprehend in production. */
+  isToxic: (nickname: string) => Promise<boolean>;
 }
 
 export type ServiceError = string;
@@ -58,6 +63,11 @@ export interface GameService {
   ): Promise<Result<Game>>;
   playerSnapshot(player: PlayerIdentity): Promise<Result<PlayerSnapshot>>;
   hostSnapshot(hostId: string, gameId: string): Promise<Result<HostSnapshot>>;
+  /**
+   * Abandons every Game idle for 24 hours (FR-8.4): run hourly by the sweeper Lambda. Each Game
+   * is re-checked by the domain, so one that saw activity since the lookup is left alone.
+   */
+  abandonIdleGames(): Promise<{ abandoned: number }>;
   /** The Host's unfinished Game, if any, so they can resume it from any device (FR-8.3). */
   activeGame(hostId: string): Promise<Result<{ gameId: string } | null>>;
   /** The Host's Finished Games, newest first (FR-9.1, FR-9.2). */
@@ -77,7 +87,22 @@ const SAVE_ATTEMPTS = 10;
 const JOIN_CODE_ATTEMPTS = 5;
 
 export function createGameService(deps: ServiceDeps): GameService {
-  const { repo, now, newId, random, issuePlayerToken, publish } = deps;
+  const { repo, now, newId, random, issuePlayerToken, publish, isBlocked, isToxic } = deps;
+
+  /**
+   * True if a Nickname may be used (FR-5.3, 5.4). The blocklist is checked first because it's
+   * instant. If the toxicity check itself fails, the Nickname is allowed (fail-open, agreed in
+   * M4): an outage must not stop a party joining, and the Host can still remove a Player.
+   */
+  async function nicknameAllowed(nickname: string): Promise<boolean> {
+    if (isBlocked(nickname)) return false;
+    try {
+      return !(await isToxic(nickname));
+    } catch (err) {
+      console.warn('toxicity check failed; allowing the Nickname', err);
+      return true;
+    }
+  }
 
   /**
    * Loads the Game, decides, and saves against the version read, then publishes the events.
@@ -152,6 +177,10 @@ export function createGameService(deps: ServiceDeps): GameService {
       if (!gameId) return { ok: false, error: 'GAME_NOT_FOUND' };
       const normalised = normaliseNickname(nickname);
       if (!normalised.ok) return normalised;
+      // The same generic refusal whatever the reason (FR-5.5).
+      if (!(await nicknameAllowed(normalised.display))) {
+        return { ok: false, error: 'NICKNAME_REJECTED' };
+      }
 
       const playerId = newId();
       const joined = await apply(gameId, { type: 'Join', playerId, nickname: normalised });
@@ -193,6 +222,15 @@ export function createGameService(deps: ServiceDeps): GameService {
       // Another Host's Game reads as "not found", so its existence isn't confirmed (FR-9.2).
       const record = await repo.getHistory(hostId, gameId);
       return record ? { ok: true, value: record } : { ok: false, error: 'HISTORY_NOT_FOUND' };
+    },
+
+    async abandonIdleGames() {
+      let abandoned = 0;
+      for (const gameId of await repo.listIdleGameIds(now() - ABANDON_AFTER_MS)) {
+        // Through apply, so History, claims and the GAME_FINISHED event are handled as usual.
+        if ((await apply(gameId, { type: 'Abandon' })).ok) abandoned += 1;
+      }
+      return { abandoned };
     },
 
     async activeGame(hostId) {

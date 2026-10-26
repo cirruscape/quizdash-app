@@ -186,6 +186,11 @@ try {
     await events.subscribe(`/game/${gameId}/players`);
     bots.push({ name, option, token: joined.playerToken, playerId: joined.playerId, events });
   }
+  // Nickname moderation (FR-5.3): the real Comprehend check refuses an abusive Nickname.
+  const abusive = await call('POST', '/api/join', { body: { joinCode, nickname: 'stupid idiot' } });
+  assert.deepEqual([abusive.status, abusive.json], [400, { error: 'NICKNAME_REJECTED' }]);
+  step('an abusive Nickname was refused');
+
   await hostEvents.waitFor(
     (e) => e.type === 'PLAYER_JOINED' && e.payload.playerCount === 3,
     'three PLAYER_JOINED',

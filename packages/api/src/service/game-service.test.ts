@@ -27,6 +27,8 @@ function harness(overrides: Partial<ServiceDeps> = {}): Harness {
     publish: async (messages) => {
       published.push(...messages);
     },
+    isBlocked: () => false,
+    isToxic: async () => false,
     ...overrides,
   });
   return { service, repo, clock, published };
@@ -457,5 +459,101 @@ describe('Game History', () => {
       error: 'HISTORY_NOT_FOUND',
     });
     expect(await service.listHistory('intruder')).toEqual({ ok: true, value: [] });
+  });
+});
+
+describe('Nickname moderation (FR-5.3-5.5)', () => {
+  it('refuses a blocklisted Nickname without asking the toxicity check', async () => {
+    const asked: string[] = [];
+    const { service, repo, gameId, joinCode } = await withGame({
+      isBlocked: (name) => name === 'Bad Name',
+      isToxic: async (name) => {
+        asked.push(name);
+        return false;
+      },
+    });
+    expect(await service.joinGame(joinCode, ' Bad Name ')).toEqual({
+      ok: false,
+      error: 'NICKNAME_REJECTED',
+    });
+    expect(asked).toEqual([]);
+    expect((await repo.getGame(gameId))?.game.players).toEqual([]);
+  });
+
+  it('refuses a Nickname the toxicity check flags, checking the trimmed Nickname', async () => {
+    const asked: string[] = [];
+    const { service, joinCode } = await withGame({
+      isToxic: async (name) => {
+        asked.push(name);
+        return name === 'Nasty';
+      },
+    });
+    expect(await service.joinGame(joinCode, '  Nasty  ')).toEqual({
+      ok: false,
+      error: 'NICKNAME_REJECTED',
+    });
+    expect(asked).toEqual(['Nasty']);
+    expect((await service.joinGame(joinCode, 'Pleasant')).ok).toBe(true);
+  });
+
+  it('lets the Player in if the toxicity check itself fails (fail-open, agreed in M4)', async () => {
+    const { service, joinCode } = await withGame({
+      isToxic: async () => {
+        throw new Error('Comprehend unavailable');
+      },
+    });
+    expect((await service.joinGame(joinCode, 'Alice')).ok).toBe(true);
+  });
+});
+
+describe('the abandonment sweeper (FR-8.4)', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  it('finishes Games idle for 24 hours, recording them as abandoned, and leaves the rest', async () => {
+    const h = await startedGame('Alice'); // last activity at T0 (Start)
+    // A second Host's Game in the same store, active 23 hours later.
+    const sameStore = createGameService({
+      repo: h.repo,
+      now: () => h.clock.now,
+      newId: () => `other-${Math.random()}`,
+      random: Math.random,
+      issuePlayerToken: () => 'token',
+      publish: async () => {},
+      isBlocked: () => false,
+      isToxic: async () => false,
+    });
+    await h.repo.putQuiz('host-2', sampleQuiz('quiz2'));
+    h.clock.now = T0 + 23 * 60 * 60 * 1000;
+    const recent = await sameStore.createGame('host-2', 'quiz2');
+    if (!recent.ok) throw new Error(recent.error);
+
+    h.clock.now = T0 + DAY;
+    h.published.length = 0;
+    expect(await h.service.abandonIdleGames()).toEqual({ abandoned: 1 });
+
+    expect((await h.repo.getGame(h.gameId))?.game.phase).toBe('FINISHED');
+    expect((await h.repo.getGame(recent.value.gameId))?.game.phase).toBe('LOBBY');
+    const record = await h.service.getHistory(HOST, h.gameId);
+    expect(record.ok && record.value.abandoned).toBe(true);
+    expect(await h.repo.getActiveGameId(HOST)).toBeNull();
+    expect(await h.repo.findGameIdByJoinCode(h.joinCode)).toBeNull();
+    expect(h.published).toContainEqual(
+      expect.objectContaining({
+        channel: `/game/${h.gameId}/players`,
+        event: expect.objectContaining({
+          type: 'GAME_FINISHED',
+          payload: expect.objectContaining({ abandoned: true }),
+        }),
+      }),
+    );
+  });
+
+  it('spares a Game that saw activity just before the sweep ran', async () => {
+    const h = await startedGame('Alice', 'Bob');
+    h.clock.now = T0 + DAY - 60_000;
+    await h.service.hostCommand(HOST, h.gameId, { type: 'Close' }); // activity, a minute early
+    h.clock.now = T0 + DAY + 1;
+    expect(await h.service.abandonIdleGames()).toEqual({ abandoned: 0 });
+    expect((await h.repo.getGame(h.gameId))?.game.phase).toBe('REVEAL');
   });
 });

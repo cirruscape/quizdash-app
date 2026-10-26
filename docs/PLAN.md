@@ -406,6 +406,12 @@ Each milestone lists what gets built, then **Done when**, the condition for call
 
 ### M4: Moderation and the remaining rules
 
+- **Status (2026-10-26): built, test-first, but not yet deployed.**
+  - **Nickname moderation:** the blocklist is checked first, then Comprehend, fail-open if Comprehend errors (agreed). The blocklist's guard test caught "Shitij", a real given name, so "shit" was left to Comprehend.
+  - **Removed Players** are refused by the real-time authoriser.
+  - **The sweeper** runs hourly, finishing Games idle for 24 hours or more, with History, claims and events handled as normal. Its test found a boundary mismatch: the repository lookup is now "at or before" the cutoff, matching the domain.
+  - **Checking it:** the smoke test checks the real Comprehend path. The sweeper can't be smoke-tested without waiting 24 hours, so it's covered by unit tests and the DynamoDB contract.
+
 - **Nickname checks:**
   - the Comprehend `DetectToxicContent` check, using the threshold from SSM, cached for 5 minutes;
   - a blocklist file in `packages/api`;
