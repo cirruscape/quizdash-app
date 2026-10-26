@@ -157,6 +157,9 @@ Resources:
         Hourly:
           Type: ScheduleV2
           Properties:
+            # Without a Name, SAM uses the logical ID, which collides across environments in
+            # the account's default schedule group.
+            Name: !Sub quizapp-${Env}-sweeper-hourly
             ScheduleExpression: rate(1 hour)
       Policies:
         - DynamoDBCrudPolicy:
