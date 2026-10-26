@@ -38,7 +38,14 @@ export interface Game {
   deadline: Instant | null;
   /** Answers to the current Question. */
   answers: Answer[];
+  /** Each revealed Question's Option counts, in order, for Game History (FR-9.1). */
+  revealed: RevealedQuestion[];
   lastActivityAt: Instant;
+}
+
+export interface RevealedQuestion {
+  questionIndex: number;
+  optionCounts: Record<string, number>;
 }
 
 export type GameCommand =
@@ -138,6 +145,7 @@ export function createGame(input: {
     questionOpenedAt: null,
     deadline: null,
     answers: [],
+    revealed: [],
     lastActivityAt: input.now,
   };
 }
@@ -184,7 +192,14 @@ function reveal(game: Game, now: Instant): Decision {
     ...p,
     score: p.score + (pointsByPlayer.get(p.playerId) ?? 0),
   }));
-  const revealed: Game = { ...game, phase: 'REVEAL', players, lastActivityAt: now };
+  const revealed: Game = {
+    ...game,
+    phase: 'REVEAL',
+    players,
+    // `?? []`: Games stored before History existed have no `revealed` yet.
+    revealed: [...(game.revealed ?? []), { questionIndex: game.questionIndex, optionCounts }],
+    lastActivityAt: now,
+  };
   const results = revealResults(revealed);
 
   const base = {

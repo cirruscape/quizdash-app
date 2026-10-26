@@ -401,3 +401,25 @@ describe('decide: closing and Reveal', () => {
     });
   });
 });
+
+describe('decide: what History needs', () => {
+  it('keeps each revealed Question’s Option counts, through to the end of the Game', () => {
+    let game = ok(ok(ok(newGame(readyQuiz(2)), join('p1')).game, join('p2')).game, {
+      type: 'Start',
+    }).game;
+    game = ok(game, answer('p1', 'a'), T0).game;
+    game = ok(game, answer('p2', 'b'), T0 + 1_000).game; // Reveal Q1
+    expect(game.revealed).toEqual([{ questionIndex: 0, optionCounts: { a: 1, b: 1, c: 0, d: 0 } }]);
+
+    game = ok(game, { type: 'Next' }, T0 + 2_000).game;
+    game = ok(game, answer('p1', 'c', 1), T0 + 3_000).game;
+    game = ok(game, answer('p2', 'c', 1), T0 + 4_000).game; // Reveal Q2
+    game = ok(game, { type: 'Next' }, T0 + 5_000).game; // Finished
+
+    expect(game.phase).toBe('FINISHED');
+    expect(game.revealed).toEqual([
+      { questionIndex: 0, optionCounts: { a: 1, b: 1, c: 0, d: 0 } },
+      { questionIndex: 1, optionCounts: { a: 0, b: 0, c: 2, d: 0 } },
+    ]);
+  });
+});

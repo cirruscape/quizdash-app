@@ -417,3 +417,59 @@ describe('snapshot versions', () => {
     expect(host.ok && host.value.version).toBe(3);
   });
 });
+
+describe('Game History', () => {
+  it('records a finished Game, and lets only its Host list and open it', async () => {
+    const { service, gameId, players, clock } = await startedGame('Alice', 'Bob');
+    clock.now = T0 + 10_000;
+    await service.submitAnswer(players.Alice!, 0, 'a'); // correct at 10 of 20 s: 750
+    await service.submitAnswer(players.Bob!, 0, 'b'); // wrong: 0; Reveal
+    clock.now = T0 + 15_000;
+    await service.hostCommand(HOST, gameId, { type: 'Next' }); // last Question: Finished
+
+    expect(await service.getHistory(HOST, gameId)).toEqual({
+      ok: true,
+      value: {
+        gameId,
+        hostId: HOST,
+        quizId: 'quiz1',
+        topic: null,
+        finishedAt: T0 + 15_000,
+        abandoned: false,
+        questions: [
+          {
+            text: 'Capital of Australia?',
+            options: [
+              { optionId: 'a', text: 'Canberra' },
+              { optionId: 'b', text: 'Sydney' },
+            ],
+            correctOptionId: 'a',
+            optionCounts: { a: 1, b: 1 },
+          },
+        ],
+        leaderboard: [
+          { playerId: players.Alice!.playerId, nickname: 'Alice', score: 750, rank: 1 },
+          { playerId: players.Bob!.playerId, nickname: 'Bob', score: 0, rank: 2 },
+        ],
+      },
+    });
+    expect(await service.listHistory(HOST)).toEqual({
+      ok: true,
+      value: [
+        {
+          gameId,
+          topic: null,
+          finishedAt: T0 + 15_000,
+          abandoned: false,
+          playerCount: 2,
+          winner: 'Alice',
+        },
+      ],
+    });
+    expect(await service.getHistory('intruder', gameId)).toEqual({
+      ok: false,
+      error: 'HISTORY_NOT_FOUND',
+    });
+    expect(await service.listHistory('intruder')).toEqual({ ok: true, value: [] });
+  });
+});

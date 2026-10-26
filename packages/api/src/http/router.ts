@@ -85,6 +85,19 @@ const ROUTES: Route[] = [
   },
   {
     method: 'GET',
+    pattern: /^\/api\/history$/,
+    auth: 'host',
+    handle: async ({ deps, hostId }) => reply(200, await deps.service.listHistory(hostId)),
+  },
+  {
+    method: 'GET',
+    pattern: new RegExp(`^/api/history/(?<gameId>${ID})$`),
+    auth: 'host',
+    handle: async ({ params, deps, hostId }) =>
+      reply(200, await deps.service.getHistory(hostId, params.gameId as string)),
+  },
+  {
+    method: 'GET',
     pattern: /^\/api\/games\/active$/,
     auth: 'host',
     handle: async ({ deps, hostId }) => {
@@ -177,6 +190,7 @@ export async function handleHttp(request: HttpRequest, deps: HttpDeps): Promise<
 const STATUS: Record<string, number> = {
   GAME_NOT_FOUND: 404,
   QUIZ_NOT_FOUND: 404,
+  HISTORY_NOT_FOUND: 404,
   NICKNAME_FORMAT: 400,
   INVALID_OPTION: 400,
   NOT_YOUR_GAME: 403,

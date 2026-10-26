@@ -62,3 +62,27 @@ export interface QuizSummary {
 export function runningDeadline(s: { phase: Phase; question: { deadline: number } | null }) {
   return s.phase === 'QUESTION_OPEN' && s.question ? s.question.deadline : null;
 }
+
+export interface HistorySummary {
+  gameId: string;
+  topic: string | null;
+  finishedAt: number;
+  abandoned: boolean;
+  playerCount: number;
+  winner: string | null;
+}
+
+export interface HistoryRecord {
+  gameId: string;
+  quizId: string;
+  topic: string | null;
+  finishedAt: number;
+  abandoned: boolean;
+  questions: {
+    text: string;
+    options: Option[];
+    correctOptionId: string;
+    optionCounts: Record<string, number>;
+  }[];
+  leaderboard: LeaderboardEntry[];
+}

@@ -70,6 +70,8 @@ Resources:
         PlayAnswer: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /api/play/answers, Method: POST, Auth: { Authorizer: NONE } } }
         # Hosts: the Cognito authoriser (the default)
         ListQuizzes: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /api/quizzes, Method: GET } }
+        ListHistory: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /api/history, Method: GET } }
+        GetHistory: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: '/api/history/{gameId}', Method: GET } }
         CreateGame: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /api/games, Method: POST } }
         ActiveGame: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /api/games/active, Method: GET } }
         HostSnapshot: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: '/api/games/{gameId}', Method: GET } }

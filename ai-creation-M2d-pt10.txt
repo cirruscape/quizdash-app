@@ -1,0 +1,164 @@
+BUILDING A QUIZ APP WITH CLAUDE CODE: PART 10 (FIRST REAL GAME, AND M2d GAME HISTORY)
+====================================================================================
+
+This continues ai-creation-M2c-pt9.txt. It covers the same Claude Code
+session, from the commit that added part 9 up to this file.
+
+  Tool:   Claude Code (CLI), model Claude Opus 5.5
+  Date:   2026-10-26
+  Starts at:  commit f78503f (M2c's code, plus part 9)
+  Ends at:    the commit that adds this file
+
+How to read this:
+  USER    is what the developer typed, verbatim.
+  CLAUDE  is Claude's reply, shortened where it was long.
+  [ ... ] marks an action Claude took with its tools. These summarise the
+          action; they are not the raw tool output.
+
+
+------------------------------------------------------------------------------
+1. THE FIRST REAL GAME
+------------------------------------------------------------------------------
+
+[The developer pushed M2c, and the pipeline deployed the web app.]
+
+USER:
+I have signed up with my email as [the developer's email]
+
+[Claude ran the seed script for that email. It found the Host in Cognito
+ and gave them the 5-Question "General knowledge" sample Quiz.]
+[Before handing over, Claude checked the deployed app with curl:]
+    /                 200 the app
+    /play/game        200 the app (the CloudFront Function rewrite works)
+    /host/games/x     200 the app
+    /config.json      200 the dev Cognito and AppSync settings
+    /api/health       200 {"status":"ok","env":"dev"} through CloudFront
+    /api/nope         404 JSON, not the app's HTML page
+
+CLAUDE:
+App URL: https://[dev CloudFront domain]
+Worth trying, because these exercise the trickier parts:
+ - Lock a phone or reload it mid-Question; it should silently rejoin.
+ - Let a Question run out; the Host's screen should close it at zero.
+ - Remove a Player in the Lobby.
+ - Close and reopen the Host's tab mid-Game; the home should offer
+   "Resume it".
+
+
+------------------------------------------------------------------------------
+2. "WHAT'S LEFT?" AND "HOW DO I CREATE A QUIZ FROM A TOPIC?"
+------------------------------------------------------------------------------
+
+USER:
+Are there any steps in the plan remaining? How can I add the option for a
+host to create a new quiz for a specific topic via the web ui?
+
+CLAUDE:
+[A status table:]
+  M0, M1, M2a, M2b    done
+  M2c                 built and deployed, but not yet tested by hand
+  M2d Game History    not started
+  M3 Quiz generation  not started: this is the feature you're asking about
+  M4 moderation       not started
+  M5 production       not started
+Creating a Quiz from a Topic in the web UI is M3. The design is already
+settled in the PRD and PLAN §8:
+ 1. A "New quiz" form: a free-text Topic, a Difficulty, 5-20 Questions,
+    and a default Time Limit.
+ 2. POST /api/quizzes checks the daily limit, saves a Draft Quiz marked
+    "generating", and hands the work to a background worker, because
+    generation takes tens of seconds.
+ 3. The worker invokes the AgentCore agent, with the Host's earlier
+    Questions on similar Topics, so the agent avoids repeats.
+ 4. The agent generates the Questions, then verifies each one in a
+    separate check, and regenerates any that fail. JSON comes back
+    through Converse tool use, because Nova 2 Lite doesn't support
+    Bedrock's native structured outputs (ADR 0005).
+ 5. A review screen: discard or regenerate single Questions, override
+    Time Limits, then approve.
+ 6. Plain errors for refused Topics, and for hitting the daily limit.
+My suggested order: finish today's hand test, then M3, then M2d.
+
+USER:
+M2C has been tested successfully; continue to M2d
+
+[The developer chose M2d first. Claude followed that choice.]
+
+
+------------------------------------------------------------------------------
+3. M2d: GAME HISTORY, TEST-FIRST
+------------------------------------------------------------------------------
+
+[M2d used the seams already agreed for M2, so Claude didn't ask for new
+ seam decisions. Each slice was red then green:]
+
+  Domain
+    - The Game keeps each revealed Question's Option counts, through to
+      the end. Games stored before History existed have no such list
+      yet, so the code tolerates its absence.
+  Repository contract
+    - A Host's History lists newest first, and stays private to that
+      Host. It passed in memory AND against the real dev DynamoDB table.
+      (Claude also folded two paged DynamoDB queries into one shared
+      helper; the contract confirmed nothing changed.)
+  Service
+    - When a Game finishes, its History record is written before the
+      Join Code and active-Game slot are released: the revealed
+      Questions as played, the correct Options, the per-Option counts,
+      and the final Leaderboard.
+    - The list shows the winner and Player count.
+    - Another Host's Game reads as "not found", so its existence isn't
+      confirmed (FR-9.2).
+  Router
+    - GET /api/history and GET /api/history/{gameId}, for Hosts only,
+      with HISTORY_NOT_FOUND mapped to 404. Both added to the API stack.
+
+[The web app gained a "Past games" list (newest first, with the winner
+ and Player count), a detail page (the final Leaderboard and each
+ Question's counts, with the correct Option highlighted), and a "See this
+ game's full results" link on the Finished screen.]
+[The smoke test now checks after every deploy that History recorded the
+ Game exactly as played.]
+
+CLAUDE:
+M2d is done, and all of it was built test-first. All 140 tests pass,
+along with format, lint, typecheck, cfn-lint and the web build.
+One limitation: Games that finished before this deploys have no History. I
+didn't add a backfill.
+
+
+------------------------------------------------------------------------------
+4. THIS FILE
+------------------------------------------------------------------------------
+
+USER:
+Now write a file ./ai-creation-M2d-pt10.txt which describes steps done
+since ./ai-creation-m2c-pt9.txt. Then commit changes
+
+[Claude wrote this file and committed.]
+
+
+------------------------------------------------------------------------------
+WHERE THINGS STAND
+------------------------------------------------------------------------------
+
+M2 (live play) is complete: the API core and stack, the web app (tested by
+hand by the developer), and Game History. Pushing this commit deploys
+History, and the smoke job checks it.
+
+Next: M3, creating Quizzes from a Topic with the generation agent:
+generate, then verify, then a review screen and approval.
+Then M4 (moderation and the abandonment sweeper) and M5 (production).
+
+Observations worth blogging about:
+  - Before the developer's first real Game, Claude checked the deployed
+    app from the outside (routes, config, API routing, error format), so
+    the hand test started from a known-good state.
+  - Asked "what's left?", Claude answered with an honest status table,
+    including "built but not yet tested by hand", rather than calling M2c
+    finished.
+  - Claude gave a recommendation on order, and then followed the
+    developer's different choice without arguing.
+  - Small, real details were handled deliberately: tolerating Games stored
+    before the new field existed, not revealing other Hosts' Games, and
+    stating plainly what the change doesn't cover (no History backfill).

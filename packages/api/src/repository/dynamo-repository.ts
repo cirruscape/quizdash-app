@@ -4,6 +4,7 @@
 //   Game          PK GAME#{gameId}       SK META              game, version, GSI1PK/GSI1SK*
 //   Join Code     PK JOINCODE#{code}     SK META              gameId
 //   Active Game   PK HOST#{hostId}       SK ACTIVE_GAME       gameId
+//   History       PK HOST#{hostId}       SK HISTORY#{gameId}  record
 //
 // * Unfinished Games carry GSI1PK=UNFINISHED and GSI1SK=lastActivityAt, a sparse index the
 //   abandonment sweeper queries (FR-8.4, M4).
@@ -16,7 +17,12 @@ import {
   QueryCommand,
 } from '@aws-sdk/lib-dynamodb';
 import type { Game, Quiz } from '@quizapp/domain';
-import { ConflictError, type GameRepository, type StoredGame } from './repository.js';
+import {
+  ConflictError,
+  type GameRepository,
+  type HistoryRecord,
+  type StoredGame,
+} from './repository.js';
 
 const META = 'META';
 
@@ -52,21 +58,7 @@ export class DynamoRepository implements GameRepository {
   }
 
   async listQuizzes(hostId: string): Promise<Quiz[]> {
-    const quizzes: Quiz[] = [];
-    let ExclusiveStartKey: Record<string, unknown> | undefined;
-    do {
-      const res = await this.db.send(
-        new QueryCommand({
-          TableName: this.tableName,
-          KeyConditionExpression: 'PK = :pk AND begins_with(SK, :quiz)',
-          ExpressionAttributeValues: { ':pk': `HOST#${hostId}`, ':quiz': 'QUIZ#' },
-          ExclusiveStartKey,
-        }),
-      );
-      for (const item of res.Items ?? []) quizzes.push(item.quiz as Quiz);
-      ExclusiveStartKey = res.LastEvaluatedKey;
-    } while (ExclusiveStartKey);
-    return quizzes;
+    return this.queryAll<Quiz>(`HOST#${hostId}`, 'QUIZ#', 'quiz');
   }
 
   async getGame(gameId: string): Promise<StoredGame | null> {
@@ -145,6 +137,50 @@ export class DynamoRepository implements GameRepository {
       if (!(err instanceof ConditionalCheckFailedException)) throw err;
       // Held by a different Game (or nobody): nothing to release.
     }
+  }
+
+  async putHistory(record: HistoryRecord): Promise<void> {
+    await this.db.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: { PK: `HOST#${record.hostId}`, SK: `HISTORY#${record.gameId}`, record },
+      }),
+    );
+  }
+
+  async listHistory(hostId: string): Promise<HistoryRecord[]> {
+    // Small per Host, so sorting by finish time in memory is fine at this scale.
+    const records = await this.queryAll<HistoryRecord>(`HOST#${hostId}`, 'HISTORY#', 'record');
+    return records.sort((a, b) => b.finishedAt - a.finishedAt);
+  }
+
+  async getHistory(hostId: string, gameId: string): Promise<HistoryRecord | null> {
+    const res = await this.db.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: { PK: `HOST#${hostId}`, SK: `HISTORY#${gameId}` },
+      }),
+    );
+    return (res.Item?.record as HistoryRecord | undefined) ?? null;
+  }
+
+  /** Every item under a partition whose sort key starts with `prefix`, paging as needed. */
+  private async queryAll<T>(pk: string, prefix: string, attribute: string): Promise<T[]> {
+    const items: T[] = [];
+    let ExclusiveStartKey: Record<string, unknown> | undefined;
+    do {
+      const res = await this.db.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+          ExpressionAttributeValues: { ':pk': pk, ':prefix': prefix },
+          ExclusiveStartKey,
+        }),
+      );
+      for (const item of res.Items ?? []) items.push(item[attribute] as T);
+      ExclusiveStartKey = res.LastEvaluatedKey;
+    } while (ExclusiveStartKey);
+    return items;
   }
 
   /** Puts a claim item unless one exists; false if it was already claimed. */

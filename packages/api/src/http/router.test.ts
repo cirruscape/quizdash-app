@@ -199,3 +199,30 @@ describe('GET /api/quizzes', () => {
     ]);
   });
 });
+
+describe('History routes', () => {
+  it("serve the signed-in Host's History, and 404 for anyone else's Game", async () => {
+    const { service, call } = await setup();
+    const created = await service.createGame(HOST, 'quiz1');
+    if (!created.ok) throw new Error(created.error);
+    const { gameId, joinCode } = created.value;
+    const alice = await service.joinGame(joinCode, 'Alice');
+    if (!alice.ok) throw new Error(alice.error);
+    await service.hostCommand(HOST, gameId, { type: 'Start' });
+    await service.submitAnswer(alice.value, 0, 'a');
+    await service.hostCommand(HOST, gameId, { type: 'Next' });
+
+    expect((await call({ method: 'GET', path: '/api/history' })).statusCode).toBe(401);
+
+    const list = await call({ method: 'GET', path: '/api/history', hostId: HOST });
+    expect(list.statusCode).toBe(200);
+    expect(json(list)).toMatchObject([{ gameId, winner: 'Alice', playerCount: 1 }]);
+
+    const detail = await call({ method: 'GET', path: `/api/history/${gameId}`, hostId: HOST });
+    expect(detail.statusCode).toBe(200);
+    expect(json(detail)).toMatchObject({ gameId, leaderboard: [{ nickname: 'Alice' }] });
+
+    const intruder = await call({ method: 'GET', path: `/api/history/${gameId}`, hostId: 'x' });
+    expect([intruder.statusCode, json(intruder)]).toEqual([404, { error: 'HISTORY_NOT_FOUND' }]);
+  });
+});

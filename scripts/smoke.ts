@@ -244,6 +244,23 @@ try {
   step(`Game finished: ${board.map((e) => `${e.rank}. ${e.nickname} ${e.score}`).join(', ')}`);
   step(`real-time events lost and recovered from snapshots: ${lost} of ${expected}`);
 
+  // History (FR-9.1): the Game is recorded as played.
+  const history = (await expectOk('GET', `/api/history/${gameId}`, { token: host.idToken })) as {
+    questions: { optionCounts: Record<string, number> }[];
+    leaderboard: { nickname: string; score: number }[];
+  };
+  assert.equal(history.questions.length, quiz.questions.length);
+  for (const q of history.questions) assert.deepEqual(q.optionCounts, { a: 2, b: 1, c: 0, d: 0 });
+  for (const entry of history.leaderboard) assert.equal(entry.score, pointsByName[entry.nickname]);
+  const past = (await expectOk('GET', '/api/history', { token: host.idToken })) as unknown as {
+    gameId: string;
+  }[];
+  assert.ok(
+    past.some((g) => g.gameId === gameId),
+    'Game missing from the History list',
+  );
+  step('History recorded the Game as played');
+
   const active = await expectOk('GET', '/api/games/active', { token: host.idToken });
   assert.equal(active.gameId, null, "the Host's active-Game slot should be free");
 

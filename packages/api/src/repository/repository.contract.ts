@@ -3,7 +3,7 @@
 // faithful to the real thing.
 import { createGame, type Game, type Quiz } from '@quizapp/domain';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { ConflictError, type GameRepository } from './repository.js';
+import { ConflictError, type GameRepository, type HistoryRecord } from './repository.js';
 
 export const T0 = 1_800_000_000_000;
 
@@ -114,6 +114,38 @@ export function repositoryContract(name: string, makeRepository: () => GameRepos
       const listed = await repo.listQuizzes(owner);
       expect(listed.map((q) => q.quizId).sort()).toEqual([a.quizId, b.quizId].sort());
       expect(await repo.listQuizzes(uniqueId('host'))).toEqual([]);
+    });
+
+    it("keeps a Host's History newest first, private to that Host", async () => {
+      const [owner, other] = [uniqueId('host'), uniqueId('host')];
+      const record = (gameId: string, finishedAt: number): HistoryRecord => ({
+        gameId,
+        hostId: owner,
+        quizId: 'quiz1',
+        topic: 'Capitals',
+        finishedAt,
+        abandoned: false,
+        questions: [
+          {
+            text: 'Capital of Australia?',
+            options: [
+              { optionId: 'a', text: 'Canberra' },
+              { optionId: 'b', text: 'Sydney' },
+            ],
+            correctOptionId: 'a',
+            optionCounts: { a: 2, b: 1 },
+          },
+        ],
+        leaderboard: [{ playerId: 'p1', nickname: 'Alice', score: 975, rank: 1 }],
+      });
+      const [older, newer] = [record(uniqueId('game'), T0), record(uniqueId('game'), T0 + 60_000)];
+      await repo.putHistory(older);
+      await repo.putHistory(newer);
+
+      expect(await repo.listHistory(owner)).toEqual([newer, older]);
+      expect(await repo.getHistory(owner, older.gameId)).toEqual(older);
+      expect(await repo.listHistory(other)).toEqual([]);
+      expect(await repo.getHistory(other, older.gameId)).toBeNull();
     });
   });
 }

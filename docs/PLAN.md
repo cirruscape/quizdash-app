@@ -357,8 +357,8 @@ Each milestone lists what gets built, then **Done when**, the condition for call
 - **Split into four parts (agreed 2026-10-26):**
   - **M2a, the API core:** done.
   - **M2b, the api stack, seed script and API smoke test:** done. The smoke test plays a whole Game against dev on every deploy.
-  - **M2c, the web stack and screens:** next. Clients must recover from lost events using snapshots (ADR 0002).
-  - **M2d, History:** after M2c.
+  - **M2c, the web stack and screens:** done and tested by hand. Screens render from snapshots only, recovering lost events (ADR 0002).
+  - **M2d, History:** done. A finished Game is recorded with its revealed Questions, per-Option counts and final Leaderboard, and only its Host can list or open it. The smoke test checks it.
 
 - **Back end:**
   - the DynamoDB repository;

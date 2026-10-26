@@ -6,6 +6,7 @@ import { Amplify } from 'aws-amplify';
 import { Route, Routes } from 'react-router';
 import { appConfig } from '../config.js';
 import { HostGame } from './HostGame.js';
+import { HostHistoryDetail, HostHistoryList } from './HostHistory.js';
 import { HostHome } from './HostHome.js';
 
 // Configured here, not in main.tsx, so Amplify stays out of the Players' bundle.
@@ -26,6 +27,8 @@ export function HostApp() {
           <Routes>
             <Route index element={<HostHome />} />
             <Route path="games/:gameId" element={<HostGame />} />
+            <Route path="history" element={<HostHistoryList />} />
+            <Route path="history/:gameId" element={<HostHistoryDetail />} />
           </Routes>
         </>
       )}

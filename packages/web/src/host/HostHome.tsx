@@ -47,6 +47,9 @@ export function HostHome() {
 
   return (
     <Page title="Your quizzes">
+      <Link className="link" to="/host/history">
+        Past games →
+      </Link>
       {activeGameId && (
         <div className="banner">
           <p>You have a game in progress.</p>

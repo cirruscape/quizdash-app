@@ -9,8 +9,13 @@ import {
   type GameCommand,
   type Instant,
 } from '@quizapp/domain';
-import { ConflictError, type GameRepository } from '../repository/repository.js';
+import {
+  ConflictError,
+  type GameRepository,
+  type HistoryRecord,
+} from '../repository/repository.js';
 import { routeEvents, type Publish } from './events.js';
+import { historyRecord, historySummary, type HistorySummary } from './history.js';
 import {
   hostSnapshot,
   playerSnapshot,
@@ -57,6 +62,9 @@ export interface GameService {
   activeGame(hostId: string): Promise<Result<{ gameId: string } | null>>;
   /** The Host's Ready Quizzes, the ones a Game can be started from (FR-4.1). */
   listQuizzes(hostId: string): Promise<Result<QuizSummary[]>>;
+  /** The Host's Finished Games, newest first (FR-9.1, FR-9.2). */
+  listHistory(hostId: string): Promise<Result<HistorySummary[]>>;
+  getHistory(hostId: string, gameId: string): Promise<Result<HistoryRecord>>;
 }
 
 export interface QuizSummary {
@@ -105,7 +113,10 @@ export function createGameService(deps: ServiceDeps): GameService {
         throw err;
       }
       if (decision.game.phase === 'FINISHED' && stored.game.phase !== 'FINISHED') {
-        // A Finished Game frees its Join Code and its Host's active-Game slot (FR-4.2, FR-4.3).
+        // Record it in History (FR-9.1), then free its Join Code and its Host's active-Game slot
+        // (FR-4.2, FR-4.3).
+        const abandoned = command.type === 'Abandon';
+        await repo.putHistory(historyRecord(decision.game, at, abandoned));
         await repo.releaseJoinCode(decision.game.joinCode);
         await repo.releaseActiveGame(decision.game.hostId, gameId);
       }
@@ -194,6 +205,16 @@ export function createGameService(deps: ServiceDeps): GameService {
             questionCount: q.questions.length,
           })),
       };
+    },
+
+    async listHistory(hostId) {
+      return { ok: true, value: (await repo.listHistory(hostId)).map(historySummary) };
+    },
+
+    async getHistory(hostId, gameId) {
+      // Another Host's Game reads as "not found", so its existence isn't confirmed (FR-9.2).
+      const record = await repo.getHistory(hostId, gameId);
+      return record ? { ok: true, value: record } : { ok: false, error: 'HISTORY_NOT_FOUND' };
     },
 
     async activeGame(hostId) {

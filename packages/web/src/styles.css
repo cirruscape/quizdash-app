@@ -188,6 +188,19 @@ label {
   margin: 0;
 }
 
+.card--link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.card--link:hover {
+  border-color: var(--accent);
+}
+
+.card__winner {
+  font-weight: 650;
+}
+
 .hostbar {
   max-width: 40rem;
   margin: 0 auto;

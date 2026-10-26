@@ -159,6 +159,9 @@ export function HostGame() {
           <Link className="button button--primary" to="/host">
             Back to your quizzes
           </Link>
+          <Link className="button" to={`/host/history/${s.gameId}`}>
+            See this game’s full results
+          </Link>
         </Page>
       );
   }

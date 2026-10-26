@@ -1,13 +1,19 @@
 // In-memory GameRepository for tests (seam S3). Values are deep-copied in and out, so callers
 // can't mutate stored state, just as with a real database.
 import type { Game, Quiz } from '@quizapp/domain';
-import { ConflictError, type GameRepository, type StoredGame } from './repository.js';
+import {
+  ConflictError,
+  type GameRepository,
+  type HistoryRecord,
+  type StoredGame,
+} from './repository.js';
 
 export class MemoryRepository implements GameRepository {
   private readonly quizzes = new Map<string, Quiz>();
   private readonly games = new Map<string, StoredGame>();
   private readonly joinCodes = new Map<string, string>();
   private readonly activeGames = new Map<string, string>();
+  private readonly history = new Map<string, HistoryRecord>();
 
   /** Test inspection: every Join Code currently claimed. */
   heldJoinCodes(): string[] {
@@ -75,5 +81,21 @@ export class MemoryRepository implements GameRepository {
 
   async releaseActiveGame(hostId: string, gameId: string): Promise<void> {
     if (this.activeGames.get(hostId) === gameId) this.activeGames.delete(hostId);
+  }
+
+  async putHistory(record: HistoryRecord): Promise<void> {
+    this.history.set(`${record.hostId}/${record.gameId}`, structuredClone(record));
+  }
+
+  async listHistory(hostId: string): Promise<HistoryRecord[]> {
+    return [...this.history.values()]
+      .filter((r) => r.hostId === hostId)
+      .sort((a, b) => b.finishedAt - a.finishedAt)
+      .map((r) => structuredClone(r));
+  }
+
+  async getHistory(hostId: string, gameId: string): Promise<HistoryRecord | null> {
+    const record = this.history.get(`${hostId}/${gameId}`);
+    return record ? structuredClone(record) : null;
   }
 }
