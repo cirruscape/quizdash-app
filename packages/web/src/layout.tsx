@@ -11,6 +11,9 @@ export function Layout({ children }: { children: ReactNode }) {
           <Link className="site-header__title" to="/">
             Trivolt
           </Link>
+          <Link className="site-header__link" to="/about">
+            About
+          </Link>
         </nav>
       </header>
       <div className="site-main">{children}</div>
