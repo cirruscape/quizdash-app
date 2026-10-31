@@ -60,7 +60,7 @@ Every push to `main` runs `.github/workflows/deploy.yml`, which deploys to dev. 
 4. **agent**: the `quizapp-dev-agent` stack, then a smoke test that invokes the agent and expects "Canberra" in the reply (Spike A).
 5. **api**: the `quizapp-dev-api` stack (HTTP API, the API Lambda, AppSync Events). This runs in parallel with steps 3 and 4.
 6. **smoke**: plays a whole Game against dev over HTTP and AppSync Events.
-7. **ops**: the `quizapp-{env}-ops` stack (alarms and a budget alert, emailed to `ALERT_EMAIL`), only when the GitHub Environment sets `ALERT_EMAIL`.
+7. **ops**: the `quizapp-{env}-ops` stack (alarms and a budget alert, emailed to `ALERT_EMAIL`), only when the GitHub Environment has an `ALERT_EMAIL` secret.
 8. **certs**: the `quizapp-dev-certs` stack in **us-east-1**, the website's certificate (CloudFront only accepts certificates from there). This runs in parallel with the others.
 9. **web**: the `quizapp-dev-web` stack (S3 and CloudFront), then the app itself. The job prints the app's URL, then checks the site and the `www.` redirect.
 
@@ -116,7 +116,7 @@ aws cloudformation deploy --profile quizdash --region ap-southeast-2 \
 
 **2. GitHub Environments** (Settings → Environments):
 
-- **`prod`:** the three variables from the prod bootstrap stack's outputs, as for dev, plus `ALERT_EMAIL`. Under **Deployment branches and tags**, allow only tags matching `v*`.
+- **`prod`:** the three variables from the prod bootstrap stack's outputs, as for dev, plus an **Environment secret** (not a variable) named `ALERT_EMAIL`. Variables are printed in the public Actions logs; secrets are masked. Under **Deployment branches and tags**, allow only tags matching `v*`.
 - **`prod-approval`:** no variables. Add yourself under **Required reviewers**.
 
 **3. Confirm the alert subscription:** the first prod deploy sends an AWS confirmation email to `ALERT_EMAIL`. Alarms aren't emailed until you confirm it.

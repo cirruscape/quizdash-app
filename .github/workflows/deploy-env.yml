@@ -15,7 +15,8 @@ name: Deploy an environment
 # Requires a GitHub Environment named after the environment, with these variables, taken from
 # the outputs of its quizapp-{env}-bootstrap stack (see README):
 #   AWS_DEPLOY_ROLE_ARN, CFN_EXECUTION_ROLE_ARN, ARTIFACTS_BUCKET
-# and optionally ALERT_EMAIL, for the ops stack.
+# and optionally an ALERT_EMAIL secret, for the ops stack. It's a secret rather than a variable
+# so the address is masked in the (public) Actions logs.
 
 on:
   workflow_call:
@@ -334,10 +335,10 @@ jobs:
 
       - name: Deploy ops stack (alarms and budget)
         env:
-          ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
         run: |
           if [ -z "$ALERT_EMAIL" ]; then
-            echo "No ALERT_EMAIL variable on the ${APP_ENV} GitHub Environment; skipping alarms."
+            echo "No ALERT_EMAIL secret on the ${APP_ENV} GitHub Environment; skipping alarms."
             exit 0
           fi
           aws cloudformation deploy \

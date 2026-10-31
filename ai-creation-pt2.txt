@@ -100,7 +100,7 @@ Yes proceed with steps 1 & 2
  AWS profile.]
 
 [First failure. The stack rolled back because a CloudFormation Hook in the
- account, Tbs::Devops::LambdaCfnHooks, rejected the Lambda. Claude read the
+ account rejected the Lambda. Claude read the
  hook's result: "ReservedConcurrentExecutions must be present."]
 [Claude checked the account's Lambda limits: 2,000 in total, about 1,885
  unreserved. It complied with the policy rather than working around it,
